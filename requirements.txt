@@ -1,0 +1,5 @@
+fastapi
+uvicorn
+smartapi-python
+pyotp
+requests
