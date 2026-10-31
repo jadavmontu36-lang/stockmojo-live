@@ -43,6 +43,12 @@ if os.path.exists(json_path):
 
 BASELINE_OI_MAP = {}
 
+# Indian Standard Time (IST) Helper
+def get_current_ist_time():
+    utc_now = datetime.datetime.utcnow()
+    ist_now = utc_now + datetime.timedelta(hours=5, minutes=30)
+    return ist_now
+
 def parse_expiry_date(e_str):
     if not e_str:
         return None
@@ -56,7 +62,7 @@ def parse_expiry_date(e_str):
     return None
 
 def get_all_active_expiries():
-    today = datetime.date.today()
+    ist_today = get_current_ist_time().date()
     exp_map = {}
     for inst in INSTRUMENT_CACHE:
         name = str(inst.get("name", "")).strip().upper()
@@ -64,7 +70,7 @@ def get_all_active_expiries():
         if name == "NIFTY" and itype == "OPTIDX":
             e_str = str(inst.get("expiry", "")).strip().upper()
             dt = parse_expiry_date(e_str)
-            if dt and dt >= today:
+            if dt and dt >= ist_today:
                 norm_key = dt.strftime("%d%b%Y").upper()
                 if norm_key not in exp_map:
                     exp_map[norm_key] = dt
@@ -154,9 +160,9 @@ def fetch_angel_market_data(tokens):
     return data_dict
 
 def fetch_candle_data_for_token(token, interval_str, exchange="NFO"):
-    now = datetime.datetime.now()
-    to_date = now.strftime("%Y-%m-%d 15:30")
-    from_date = (now - datetime.timedelta(days=4)).strftime("%Y-%m-%d 09:15")
+    ist_now = get_current_ist_time()
+    to_date = ist_now.strftime("%Y-%m-%d 15:30")
+    from_date = (ist_now - datetime.timedelta(days=4)).strftime("%Y-%m-%d 09:15")
     
     historic_param = {
         "exchange": exchange,
@@ -211,7 +217,7 @@ def get_market_data(
     else:
         if spot <= 0:
             spot = 23053.10
-        base_time = int(datetime.datetime.now().timestamp()) - 3600 * 5
+        base_time = int(get_current_ist_time().timestamp()) - 3600 * 5
         cur = spot - 20.0
         spot_candles = []
         for i in range(50):
@@ -365,7 +371,9 @@ def get_quantum_oi_stream():
 
     calls_data = []
     puts_data = []
-    time_str = datetime.datetime.now().strftime("%H:%M:%S")
+    
+    # Exact Indian Standard Time (IST)
+    ist_time_str = get_current_ist_time().strftime("%I:%M:%S %p")
 
     call_steps = [4, 3, 2, 1, 0, -1, -2]
     for i in call_steps:
@@ -452,7 +460,7 @@ def get_quantum_oi_stream():
         "spot": spot,
         "atm": atm,
         "expiry": active_exp,
-        "time": time_str,
+        "time": ist_time_str,
         "calls": calls_data,
         "puts": puts_data,
         "main_res": main_res,
@@ -688,7 +696,7 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
 </html>
 """
 
-# ==================== QUANTUM REVERSAL MATRIX (PERFECT SYMMETRY & ZERO CUT) ====================
+# ==================== QUANTUM REVERSAL MATRIX (EXACT IST TIME & BALANCED) ====================
 OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="gu">
 <head>
@@ -867,7 +875,6 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             100% { transform: translateX(-100%); } 
         }
 
-        /* MOBILE ADJUSTMENTS WITHOUT CUTTING */
         @media (max-width: 768px) {
             .strike-nodes-col { width: 230px !important; max-width: 50% !important; padding: 2px 4px !important; }
             .strike-card-node { font-size: 9px !important; padding: 3px 4px !important; }
@@ -972,7 +979,12 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 document.getElementById('spotCenterVal').innerText = `₹ ${streamData.spot.toLocaleString()}`;
                 
                 document.getElementById('radarNewsText').innerText = streamData.news;
-                document.getElementById('expTimeTag').innerText = `EXP: ${streamData.expiry} | SYNC: ${streamData.time}`;
+
+                let displayTime = streamData.time;
+                if (!displayTime || displayTime.length < 4) {
+                    displayTime = new Date().toLocaleTimeString('en-IN', { hour12: true });
+                }
+                document.getElementById('expTimeTag').innerText = `EXP: ${streamData.expiry} | SYNC: ${displayTime}`;
 
                 if (streamData.main_res) {
                     document.getElementById('txtMajorRes').innerText = `${streamData.main_res.strike} (${streamData.main_res.oi_str})`;
@@ -1080,7 +1092,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             const t = Date.now() * 0.0025;
             const isMobile = window.innerWidth <= 768;
 
-            // 1. CALL LINES (PERFECT NATURAL ARC)
+            // 1. CALL LINES
             callNodePositions.forEach((targetY, i) => {
                 let callItem = (streamData && streamData.calls && streamData.calls[i]) ? streamData.calls[i] : null;
                 let isMain = (streamData && streamData.main_res && callItem && callItem.strike === streamData.main_res.strike);
@@ -1124,7 +1136,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 }
             });
 
-            // 2. PUT LINES (EXACT SYMMETRICAL MIRROR OF CE - NO DIPPING OR U-TURN)
+            // 2. PUT LINES (EXACT SYMMETRICAL MIRROR)
             putNodePositions.forEach((targetY, i) => {
                 let putItem = (streamData && streamData.puts && streamData.puts[i]) ? streamData.puts[i] : null;
                 let isMain = (streamData && streamData.main_sup && putItem && putItem.strike === streamData.main_sup.strike);
@@ -1137,7 +1149,6 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 ctx.lineWidth = isMain ? 2.6 : 1.3;
                 ctx.strokeStyle = lineColor;
 
-                // Exact mirror math to match CE
                 let waveOffset = Math.sin(t + i * 0.7) * 8;
                 let cp1x = canvas.width * 0.38;
                 let cp1y = startY + 14 + (i * 5) + waveOffset;
