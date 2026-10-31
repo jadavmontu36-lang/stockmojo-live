@@ -355,7 +355,7 @@ def get_quantum_oi_stream():
     if spot <= 0:
         spot = 23053.10
 
-    atm = int(round(spot / 50.0) * 50)  # e.g. 23050
+    atm = int(round(spot / 50.0) * 50)
     all_exp = get_all_active_expiries()
     active_exp = all_exp[0] if all_exp else ""
     
@@ -688,12 +688,12 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
 </html>
 """
 
-# ==================== QUANTUM REVERSAL MATRIX (PERFECT BALANCED SYMMETRIC CURVES) ====================
+# ==================== QUANTUM REVERSAL MATRIX (100% MOBILE RESPONSIVE NO-CUT) ====================
 OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="gu">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Quantum OI Reversal & Transfer Matrix - Intraday Radar</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -709,7 +709,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             --text-dim: #64748b;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Noto Sans Gujarati', -apple-system, BlinkMacSystemFont, monospace, sans-serif; }
-        body { background: var(--bg-deep); color: #fff; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+        body { background: var(--bg-deep); color: #fff; height: 100vh; display: flex; flex-direction: column; overflow-x: hidden; }
 
         .cyber-header {
             height: 44px;
@@ -719,23 +719,28 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             align-items: center;
             justify-content: space-between;
             padding: 0 16px;
+            flex-shrink: 0;
         }
-        .header-title { font-size: 14.5px; font-weight: 900; color: var(--cyan-glow); display: flex; align-items: center; gap: 8px; }
-        .btn-back-chart { background: #101c2e; border: 1px solid var(--cyan-glow); color: var(--cyan-glow); padding: 5px 12px; border-radius: 4px; font-size: 11px; text-decoration: none; font-weight: bold; }
+        .header-title { font-size: 13.5px; font-weight: 900; color: var(--cyan-glow); display: flex; align-items: center; gap: 8px; }
+        .btn-back-chart { background: #101c2e; border: 1px solid var(--cyan-glow); color: var(--cyan-glow); padding: 5px 10px; border-radius: 4px; font-size: 11px; text-decoration: none; font-weight: bold; }
 
         .signal-strip {
-            height: 56px;
+            height: auto;
+            min-height: 52px;
             background: #080d17;
             border-bottom: 1px solid #142033;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 0 16px;
+            padding: 6px 14px;
+            flex-wrap: wrap;
+            gap: 6px;
+            flex-shrink: 0;
         }
-        .verdict-tag { font-size: 17px; font-weight: 900; letter-spacing: 0.5px; }
+        .verdict-tag { font-size: 15px; font-weight: 900; letter-spacing: 0.5px; }
 
-        .major-node-box { display: flex; gap: 12px; align-items: center; }
-        .node-badge { padding: 6px 12px; border-radius: 4px; font-size: 11.5px; font-weight: 800; display: flex; align-items: center; gap: 6px; }
+        .major-node-box { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        .node-badge { padding: 4px 8px; border-radius: 4px; font-size: 10.5px; font-weight: 800; display: flex; align-items: center; gap: 4px; }
         .res-node { background: rgba(255, 34, 85, 0.15); border: 1.5px solid var(--red-glow); color: var(--red-glow); }
         .sup-node { background: rgba(0, 255, 136, 0.15); border: 1.5px solid var(--green-glow); color: var(--green-glow); }
 
@@ -748,7 +753,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         }
 
         .matrix-canvas-box { 
-            flex: 6.8; 
+            flex: 5.5; 
             position: relative; 
             background: #040609; 
             overflow: hidden; 
@@ -756,15 +761,16 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         #streamCanvas { width: 100%; height: 100%; display: block; }
 
         .strike-nodes-col {
-            flex: 3.2;
+            flex: 4.5;
             background: #080d16;
             border-left: 1.5px solid #142033;
             display: flex;
             flex-direction: column;
             justify-content: space-between;
-            padding: 8px 12px;
+            padding: 6px 8px;
             position: relative;
             height: 100%;
+            overflow-y: auto;
         }
 
         .strike-group-container {
@@ -772,88 +778,81 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             display: flex;
             flex-direction: column;
             justify-content: space-around;
-            padding: 4px 0;
+            padding: 2px 0;
+            gap: 2px;
         }
 
         .strike-card-node {
             background: #0d1522;
             border: 1px solid #1a273b;
-            border-radius: 5px;
-            padding: 7px 12px;
+            border-radius: 4px;
+            padding: 5px 8px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            font-size: 12.5px;
+            font-size: 11.5px;
             position: relative;
-            margin: 2px 0;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+            white-space: nowrap;
         }
-        .node-call { border-left: 4px solid var(--green-glow); }
-        .node-put { border-left: 4px solid var(--red-glow); }
+        .node-call { border-left: 3px solid var(--green-glow); }
+        .node-put { border-left: 3px solid var(--red-glow); }
         
-        .badge-atm { background: rgba(0, 240, 255, 0.25); color: var(--cyan-glow); border: 1.2px solid var(--cyan-glow); padding: 2px 6px; border-radius: 3px; font-weight: 800; font-size: 10.5px; }
-        .badge-itm { background: rgba(192, 132, 252, 0.25); color: var(--purple-glow); border: 1.2px solid var(--purple-glow); padding: 2px 6px; border-radius: 3px; font-weight: 800; font-size: 10.5px; }
-        .badge-otm { background: rgba(100, 116, 139, 0.25); color: #cbd5e1; padding: 2px 6px; border-radius: 3px; font-size: 10.5px; font-weight: 700; }
+        .badge-atm { background: rgba(0, 240, 255, 0.25); color: var(--cyan-glow); border: 1px solid var(--cyan-glow); padding: 1px 4px; border-radius: 3px; font-weight: 800; font-size: 9px; }
+        .badge-itm { background: rgba(192, 132, 252, 0.25); color: var(--purple-glow); border: 1px solid var(--purple-glow); padding: 1px 4px; border-radius: 3px; font-weight: 800; font-size: 9px; }
+        .badge-otm { background: rgba(100, 116, 139, 0.25); color: #cbd5e1; padding: 1px 4px; border-radius: 3px; font-size: 9px; font-weight: 700; }
 
         .strike-card-node.atm-node-active {
-            border: 1.8px solid var(--cyan-glow) !important;
+            border: 1.5px solid var(--cyan-glow) !important;
             background: rgba(56, 189, 248, 0.18) !important;
-            box-shadow: 0 0 14px rgba(56, 189, 248, 0.5);
         }
         .strike-card-node.main-res-active {
-            border: 1.8px solid var(--red-glow) !important;
+            border: 1.5px solid var(--red-glow) !important;
             background: rgba(255, 34, 85, 0.22) !important;
-            box-shadow: 0 0 14px rgba(255, 34, 85, 0.6);
         }
         .strike-card-node.main-sup-active {
-            border: 1.8px solid var(--green-glow) !important;
+            border: 1.5px solid var(--green-glow) !important;
             background: rgba(0, 255, 136, 0.22) !important;
-            box-shadow: 0 0 14px rgba(0, 255, 136, 0.6);
         }
 
-        .glow-plus { color: var(--green-glow); font-weight: 800; font-size: 12px; }
-        .glow-minus { color: var(--red-glow); font-weight: 800; font-size: 12px; }
+        .glow-plus { color: var(--green-glow); font-weight: 800; font-size: 11px; }
+        .glow-minus { color: var(--red-glow); font-weight: 800; font-size: 11px; }
 
         .spot-axis-divider {
-            height: 32px;
+            height: 26px;
             background: #ffffff;
-            border-radius: 5px;
+            border-radius: 4px;
             color: #000;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 0 14px;
+            padding: 0 10px;
             font-weight: 900;
-            font-size: 13px;
-            box-shadow: 0 0 18px rgba(255,255,255,0.85);
-            margin: 4px 0;
+            font-size: 11.5px;
+            box-shadow: 0 0 12px rgba(255,255,255,0.8);
+            margin: 3px 0;
             z-index: 5;
             flex-shrink: 0;
         }
 
         .news-radar-deck {
-            height: 52px;
+            height: 48px;
             background: #080e1a;
             border-top: 1.5px solid #1a2a44;
             display: flex;
             align-items: center;
-            padding: 0 14px;
-            gap: 14px;
-            box-shadow: 0 -4px 15px rgba(0,0,0,0.6);
+            padding: 0 10px;
+            gap: 10px;
+            flex-shrink: 0;
         }
         .radar-badge-box {
             background: #ff2255;
             color: #fff;
             font-weight: 900;
-            font-size: 11.5px;
-            padding: 6px 12px;
+            font-size: 10px;
+            padding: 4px 8px;
             border-radius: 4px;
-            letter-spacing: 0.5px;
-            display: flex;
-            align-items: center;
-            gap: 6px;
             flex-shrink: 0;
-            box-shadow: 0 0 12px rgba(255,34,85,0.5);
         }
         .news-ticker-container { flex: 1; overflow: hidden; position: relative; }
         
@@ -861,52 +860,90 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             display: inline-block;
             white-space: nowrap;
             color: #f8fafc;
-            font-size: 14.5px;
+            font-size: 13px;
             font-weight: 700;
-            letter-spacing: 0.3px;
             animation: slowMarquee 45s linear infinite;
-        }
-        .news-scroll-text:hover { 
-            animation-play-state: paused; 
-            color: var(--cyan-glow);
-            cursor: pointer; 
         }
         @keyframes slowMarquee { 
             0% { transform: translateX(100%); } 
             100% { transform: translateX(-100%); } 
+        }
+
+        /* 100% RESPONSIVE RULES FOR SMARTPHONES */
+        @media (max-width: 768px) {
+            body { height: auto !important; min-height: 100vh; overflow-y: auto !important; }
+            .cyber-header { padding: 0 10px; }
+            .header-title { font-size: 11.5px; }
+            .signal-strip { padding: 8px 10px; }
+            .verdict-tag { font-size: 13.5px; }
+            
+            /* Vertical Split on Mobile so nothing cuts horizontally */
+            .stream-workspace {
+                flex-direction: column !important;
+                height: auto !important;
+            }
+            .matrix-canvas-box {
+                width: 100% !important;
+                height: 280px !important;
+                min-height: 280px !important;
+                flex: none !important;
+            }
+            .strike-nodes-col {
+                width: 100% !important;
+                flex: none !important;
+                border-left: none !important;
+                border-top: 1.5px solid #142033;
+                padding: 10px;
+                height: auto !important;
+            }
+            .strike-card-node {
+                font-size: 11.5px !important;
+                padding: 8px 10px !important;
+                margin-bottom: 4px;
+            }
+            .spot-axis-divider {
+                height: 32px !important;
+                font-size: 12.5px !important;
+                margin: 6px 0 !important;
+            }
+            .news-radar-deck {
+                position: sticky;
+                bottom: 0;
+                z-index: 50;
+            }
         }
     </style>
 </head>
 <body>
     <div class="cyber-header">
         <div class="header-title">
-            <span style="display:inline-block; width:10px; height:10px; background:var(--cyan-glow); border-radius:50%; box-shadow:0 0 8px var(--cyan-glow);"></span>
-            QUANTUM OI INTRADAY RADAR (ITM / ATM / OTM)
+            <span style="display:inline-block; width:8px; height:8px; background:var(--cyan-glow); border-radius:50%; box-shadow:0 0 8px var(--cyan-glow);"></span>
+            QUANTUM OI INTRADAY RADAR
         </div>
-        <div style="font-size:11px; color:var(--text-dim);" id="expTimeTag">EXP: -- | SYNC: --</div>
-        <a href="/" class="btn-back-chart">⬅ RETURN TO CHARTS</a>
+        <div style="font-size:10.5px; color:var(--text-dim);" id="expTimeTag">EXP: -- | SYNC: --</div>
+        <a href="/" class="btn-back-chart">⬅ CHARTS</a>
     </div>
 
     <div class="signal-strip">
         <div>
-            <div style="font-size:10px; color:var(--text-dim); text-transform:uppercase;">INTRADAY VERDICT:</div>
+            <div style="font-size:9.5px; color:var(--text-dim); text-transform:uppercase;">INTRADAY VERDICT:</div>
             <div class="verdict-tag" id="verdictText" style="color:var(--green-glow);">SCANNING MARKET...</div>
         </div>
 
         <div class="major-node-box">
             <div class="node-badge res-node" id="boxMajorRes">
-                <span>🛡️ INTRADAY RESISTANCE:</span>
-                <span id="txtMajorRes" style="font-size:12.5px; font-weight:900;">--</span>
+                <span>🛡️ RES:</span>
+                <span id="txtMajorRes" style="font-size:11.5px; font-weight:900;">--</span>
             </div>
             <div class="node-badge sup-node" id="boxMajorSup">
-                <span>🏰 INTRADAY SUPPORT:</span>
-                <span id="txtMajorSup" style="font-size:12.5px; font-weight:900;">--</span>
+                <span>🏰 SUP:</span>
+                <span id="txtMajorSup" style="font-size:11.5px; font-weight:900;">--</span>
             </div>
         </div>
 
-        <div style="text-align:right;">
-            <div style="font-size:10px; color:var(--text-dim); text-transform:uppercase;">RECOMMENDED SETUP:</div>
-            <div style="font-size:12px; font-weight:800; color:var(--cyan-glow);" id="actionText">CALCULATING...</div>
+        <div>
+            <div style="font-size:9.5px; color:var(--text-dim); text-transform:uppercase;">ACTION:</div>
+            <div style="font-size:11.5px; font-weight:800; color:var(--cyan-glow);" id="actionText">CALCULATING...</div>
         </div>
     </div>
 
@@ -916,8 +953,8 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         </div>
 
         <div class="strike-nodes-col">
-            <div style="font-size:11px; font-weight:bold; color:var(--green-glow); text-transform:uppercase; margin-bottom:2px;">
-                ▲ CALL RESISTANCE NODES (OTM / ATM / ITM)
+            <div style="font-size:10.5px; font-weight:bold; color:var(--green-glow); text-transform:uppercase; margin-bottom:2px;">
+                ▲ CALL RESISTANCE (OTM / ATM / ITM)
             </div>
             <div id="callStrikesContainer" class="strike-group-container"></div>
 
@@ -926,15 +963,15 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 <span id="spotCenterVal">₹ 23,053.1</span>
             </div>
 
-            <div style="font-size:11px; font-weight:bold; color:var(--red-glow); text-transform:uppercase; margin-top:2px;">
-                ▼ PUT SUPPORT NODES (ITM / ATM / OTM)
+            <div style="font-size:10.5px; font-weight:bold; color:var(--red-glow); text-transform:uppercase; margin-top:4px;">
+                ▼ PUT SUPPORT (ITM / ATM / OTM)
             </div>
             <div id="putStrikesContainer" class="strike-group-container"></div>
         </div>
     </div>
 
     <div class="news-radar-deck">
-        <div class="radar-badge-box"><span>🔴 લાઈવ ન્યૂઝ રડાર</span></div>
+        <div class="radar-badge-box"><span>🔴 લાઈવ રડાર</span></div>
         <div class="news-ticker-container">
             <div class="news-scroll-text" id="radarNewsText">
                 📢 નિફ્ટી લાઈવ ઓપન ઈન્ટરેસ્ટ સ્કેન થઈ રહ્યો છે... નજીકની કઈ સ્ટ્રાઈક પર મોટા પાયે પોઝિશન બની રહી છે તેની વિગત અહીં લાઈવ લખાશે...
@@ -987,7 +1024,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                     let typeBadge = `<span class="badge-${c.type_tag.toLowerCase()}">${c.type_tag}</span>`;
 
                     cHtml += `<div class="strike-card-node node-call ${isMain}" id="cNode_${idx}">
-                        <span><b style="font-size:13px;">${c.strike} CE</b> ${typeBadge} <span style="color:#38bdf8; font-weight:800; margin-left:4px;">${ltpText}</span> <small style="color:#64748b; margin-left:4px;">(OI: ${c.oi_str})</small></span>
+                        <span><b>${c.strike} CE</b> ${typeBadge} <span style="color:#38bdf8; font-weight:800; margin-left:3px;">${ltpText}</span> <small style="color:#64748b; margin-left:2px;">(OI: ${c.oi_str})</small></span>
                         ${badge}
                     </div>`;
                 });
@@ -1002,7 +1039,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                     let typeBadge = `<span class="badge-${p.type_tag.toLowerCase()}">${p.type_tag}</span>`;
 
                     pHtml += `<div class="strike-card-node node-put ${isMain}" id="pNode_${idx}">
-                        <span><b style="font-size:13px;">${p.strike} PE</b> ${typeBadge} <span style="color:#ff2255; font-weight:800; margin-left:4px;">${ltpText}</span> <small style="color:#64748b; margin-left:4px;">(OI: ${p.oi_str})</small></span>
+                        <span><b>${p.strike} PE</b> ${typeBadge} <span style="color:#ff2255; font-weight:800; margin-left:3px;">${ltpText}</span> <small style="color:#64748b; margin-left:2px;">(OI: ${p.oi_str})</small></span>
                         ${badge}
                     </div>`;
                 });
@@ -1017,6 +1054,15 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             callNodePositions = [];
             putNodePositions = [];
             const containerRect = container.getBoundingClientRect();
+            const isMobile = window.innerWidth <= 768;
+
+            if (isMobile) {
+                // Distribute evenly along canvas height on mobile
+                const step = canvas.height / 16;
+                for (let i = 0; i < 7; i++) callNodePositions.push(step * (i + 1));
+                for (let i = 0; i < 7; i++) putNodePositions.push(canvas.height / 2 + step * (i + 1));
+                return;
+            }
 
             if (streamData && streamData.calls) {
                 streamData.calls.forEach((_, idx) => {
@@ -1041,7 +1087,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 
         function drawLineLabel(x, y, text, badgeColor, textColor) {
             ctx.save();
-            ctx.font = 'bold 9.5px monospace, sans-serif';
+            ctx.font = 'bold 9px monospace, sans-serif';
             let textWidth = ctx.measureText(text).width;
             let padX = 5;
             let bWidth = textWidth + (padX * 2);
@@ -1051,12 +1097,12 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 
             ctx.fillStyle = '#080d16';
             ctx.strokeStyle = badgeColor;
-            ctx.lineWidth = 1.2;
+            ctx.lineWidth = 1.1;
             ctx.shadowColor = badgeColor;
             ctx.shadowBlur = 5;
             
             ctx.beginPath();
-            ctx.roundRect(bx, by, bWidth, bHeight, 4);
+            ctx.roundRect(bx, by, bWidth, bHeight, 3);
             ctx.fill();
             ctx.stroke();
 
@@ -1075,8 +1121,9 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             const startY = canvas.height / 2;
             const endX = canvas.width;
             const t = Date.now() * 0.0025;
+            const isMobile = window.innerWidth <= 768;
 
-            // 1. Call Lines (Smooth, Stheer & Natural Arc)
+            // 1. Call Lines
             callNodePositions.forEach((targetY, i) => {
                 let callItem = (streamData && streamData.calls && streamData.calls[i]) ? streamData.calls[i] : null;
                 let isMain = (streamData && streamData.main_res && callItem && callItem.strike === streamData.main_res.strike);
@@ -1086,13 +1133,13 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 let lineColor = isMain ? '#00ff88' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : `rgba(0, 255, 136, ${0.25 + (i * 0.08)})`));
                 
                 ctx.beginPath();
-                ctx.lineWidth = isMain ? 2.8 : (isAtm ? 2.2 : 1.4);
+                ctx.lineWidth = isMain ? 2.5 : 1.3;
                 ctx.strokeStyle = lineColor;
 
-                let waveOffset = Math.sin(t + i * 0.7) * 10;
-                let cp1x = canvas.width * 0.40;
-                let cp1y = startY - 15 - (i * 6) + waveOffset;
-                let cp2x = canvas.width * 0.72;
+                let waveOffset = Math.sin(t + i * 0.7) * 8;
+                let cp1x = canvas.width * 0.35;
+                let cp1y = startY - 12 - (i * 5) + waveOffset;
+                let cp2x = canvas.width * 0.70;
                 let cp2y = targetY - waveOffset * 0.3;
 
                 ctx.moveTo(startX, startY);
@@ -1105,14 +1152,11 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 
                 ctx.beginPath();
                 ctx.fillStyle = isMain ? '#ffffff' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : '#00ff88'));
-                ctx.shadowColor = '#00ff88';
-                ctx.shadowBlur = 8;
-                ctx.arc(px, py, isMain ? 3.6 : 2.2, 0, Math.PI * 2);
+                ctx.arc(px, py, isMain ? 3.2 : 2.0, 0, Math.PI * 2);
                 ctx.fill();
-                ctx.shadowBlur = 0;
 
-                if (callItem) {
-                    let lxProg = 0.76;
+                if (callItem && !isMobile) {
+                    let lxProg = 0.75;
                     let lx = Math.pow(1 - lxProg, 3) * startX + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1x + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * endX;
                     let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2y + Math.pow(lxProg, 3) * targetY;
                     
@@ -1123,7 +1167,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 }
             });
 
-            // 2. Put Lines (EXACT BALANCED SYMMETRIC FORMULA LIKE CE)
+            // 2. Put Lines
             putNodePositions.forEach((targetY, i) => {
                 let putItem = (streamData && streamData.puts && streamData.puts[i]) ? streamData.puts[i] : null;
                 let isMain = (streamData && streamData.main_sup && putItem && putItem.strike === streamData.main_sup.strike);
@@ -1133,14 +1177,13 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 let lineColor = isMain ? '#ff2255' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : `rgba(255, 34, 85, ${0.25 + (i * 0.08)})`));
                 
                 ctx.beginPath();
-                ctx.lineWidth = isMain ? 2.8 : (isAtm ? 2.2 : 1.4);
+                ctx.lineWidth = isMain ? 2.5 : 1.3;
                 ctx.strokeStyle = lineColor;
 
-                // Symmetrical Smooth Arc (CE jevi j gentle sthir curve)
-                let waveOffset = Math.sin(t + i * 0.7) * 10;
-                let cp1x = canvas.width * 0.40;
-                let cp1y = startY + 15 + (i * 6) + waveOffset;
-                let cp2x = canvas.width * 0.72;
+                let waveOffset = Math.sin(t + i * 0.7) * 8;
+                let cp1x = canvas.width * 0.35;
+                let cp1y = startY + 12 + (i * 5) + waveOffset;
+                let cp2x = canvas.width * 0.70;
                 let cp2y = targetY + waveOffset * 0.3;
 
                 ctx.moveTo(startX, startY);
@@ -1153,16 +1196,13 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 
                 ctx.beginPath();
                 ctx.fillStyle = isMain ? '#ffffff' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : '#ff2255'));
-                ctx.shadowColor = '#ff2255';
-                ctx.shadowBlur = 8;
-                ctx.arc(px, py, isMain ? 3.6 : 2.2, 0, Math.PI * 2);
+                ctx.arc(px, py, isMain ? 3.2 : 2.0, 0, Math.PI * 2);
                 ctx.fill();
-                ctx.shadowBlur = 0;
 
-                if (putItem) {
-                    let lxProg = 0.76;
+                if (putItem && !isMobile) {
+                    let lxProg = 0.75;
                     let lx = Math.pow(1 - lxProg, 3) * startX + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1x + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * endX;
-                    let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2y + Math.pow(lxProg, 3) * targetY;
+                    let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * pProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2y + Math.pow(lxProg, 3) * targetY;
                     
                     let labelText = `${putItem.strike} PE: ${putItem.chg_str}`;
                     let labelBorderColor = isMain ? '#ff2255' : (isAtm ? '#00f0ff' : '#1a2a44');
@@ -1171,12 +1211,12 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 }
             });
 
-            // Central White Spot Line
+            // Central Spot Line
             ctx.beginPath();
             ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 2.4;
+            ctx.lineWidth = 2.0;
             ctx.shadowColor = '#ffffff';
-            ctx.shadowBlur = 12;
+            ctx.shadowBlur = 10;
             ctx.moveTo(0, startY);
             ctx.lineTo(canvas.width, startY);
             ctx.stroke();
@@ -1192,12 +1232,3 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
     </script>
 </body>
 </html>
-"""
-
-@app.get("/", response_class=HTMLResponse)
-def index():
-    return TERMINAL_HTML
-
-@app.get("/oi-analytics", response_class=HTMLResponse)
-def oi_page():
-    return OI_DASHBOARD_HTML
