@@ -688,7 +688,7 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
 </html>
 """
 
-# ==================== QUANTUM REVERSAL MATRIX (100% MOBILE RESPONSIVE NO-CUT) ====================
+# ==================== QUANTUM REVERSAL MATRIX (MOBILE RESPONSIVE NO-CUT) ====================
 OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="gu">
 <head>
@@ -869,7 +869,6 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             100% { transform: translateX(-100%); } 
         }
 
-        /* 100% RESPONSIVE RULES FOR SMARTPHONES */
         @media (max-width: 768px) {
             body { height: auto !important; min-height: 100vh; overflow-y: auto !important; }
             .cyber-header { padding: 0 10px; }
@@ -877,7 +876,6 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             .signal-strip { padding: 8px 10px; }
             .verdict-tag { font-size: 13.5px; }
             
-            /* Vertical Split on Mobile so nothing cuts horizontally */
             .stream-workspace {
                 flex-direction: column !important;
                 height: auto !important;
@@ -1057,7 +1055,6 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             const isMobile = window.innerWidth <= 768;
 
             if (isMobile) {
-                // Distribute evenly along canvas height on mobile
                 const step = canvas.height / 16;
                 for (let i = 0; i < 7; i++) callNodePositions.push(step * (i + 1));
                 for (let i = 0; i < 7; i++) putNodePositions.push(canvas.height / 2 + step * (i + 1));
@@ -1232,3 +1229,12 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
     </script>
 </body>
 </html>
+"""
+
+@app.get("/", response_class=HTMLResponse)
+def index():
+    return TERMINAL_HTML
+
+@app.get("/oi-analytics", response_class=HTMLResponse)
+def oi_page():
+    return OI_DASHBOARD_HTML
