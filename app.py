@@ -364,7 +364,7 @@ def get_quantum_oi_stream():
     all_exp = get_all_active_expiries()
     active_exp = all_exp[0] if all_exp else ""
     
-    strikes = [atm + (i * 50) for i in range(-7, 8)]
+    strikes = [atm + (i * 50) for i in range(-5, 6)]
     token_map, tokens_to_fetch = get_tokens_by_expiry_and_strikes(active_exp, strikes)
     live_quotes = fetch_angel_market_data(tokens_to_fetch)
 
@@ -373,9 +373,9 @@ def get_quantum_oi_stream():
     
     ist_time_str = get_current_ist_time().strftime("%I:%M:%S %p")
 
-    # 1. CALL STRIKES (From Highest OTM down to Spot Axis ATM in exact descending line):
-    # 23350 -> 23300 -> 23250 -> 23200 (RES) -> 23150 -> 23100 -> 23050 (ATM)
-    call_steps = [6, 5, 4, 3, 2, 1, 0]
+    # 1. CALL STRIKES (From Top OTM down to Spot Axis ATM):
+    # Top 4 OTM (23250, 23200, 23150, 23100) -> 2 ITM (23000, 22950) -> Spot Axis Pase ATM (23050)
+    call_steps = [4, 3, 2, 1, -1, -2, 0]
     for i in call_steps:
         stk = atm + (i * 50)
         tok = token_map.get(stk, {}).get("CE", "")
@@ -390,7 +390,7 @@ def get_quantum_oi_stream():
         base_oi = BASELINE_OI_MAP[base_key]
         chg = real_oi - base_oi
 
-        tag = "ATM" if stk == atm else "OTM"
+        tag = "ATM" if stk == atm else ("ITM" if stk < atm else "OTM")
 
         calls_data.append({
             "strike": stk,
@@ -403,11 +403,16 @@ def get_quantum_oi_stream():
             "is_atm": (stk == atm)
         })
 
-    # 2. PUT STRIKES (From Spot Axis ATM down to Deep OTM in exact descending line):
-    # 23050 (ATM) -> 23000 (SUP) -> 22950 -> 22900 -> 22850 -> 22800 -> 22750
-    put_steps = [0, -1, -2, -3, -4, -5, -6]
+    # 2. PUT STRIKES (From Spot Axis ATM down to Deep OTM):
+    # Spot Axis Pase ATM (23050) -> 2 ITM (23100, 23150) -> Bottom 4 OTM (23000, 22950, 22900, 22850)
+    put_steps = [0, 1, 2, -1, -2, -3, -4]
     for i in put_steps:
-        stk = atm + (i * 50)
+        if i == 0:
+            stk = atm
+        elif i > 0:
+            stk = atm + (i * 50)
+        else:
+            stk = atm + (i * 50)
 
         tok = token_map.get(stk, {}).get("PE", "")
         q = live_quotes.get(tok, {})
@@ -421,7 +426,7 @@ def get_quantum_oi_stream():
         base_oi = BASELINE_OI_MAP[base_key]
         chg = real_oi - base_oi
 
-        tag = "ATM" if stk == atm else "OTM"
+        tag = "ATM" if stk == atm else ("ITM" if stk > atm else "OTM")
 
         puts_data.append({
             "strike": stk,
@@ -437,8 +442,8 @@ def get_quantum_oi_stream():
     intraday_calls = [c for c in calls_data if c["strike"] >= atm]
     intraday_puts = [p for p in puts_data if p["strike"] <= atm]
 
-    main_res = max(intraday_calls, key=lambda x: x["oi"]) if intraday_calls else calls_data[3]
-    main_sup = max(intraday_puts, key=lambda x: x["oi"]) if intraday_puts else puts_data[1]
+    main_res = max(intraday_calls, key=lambda x: x["oi"]) if intraday_calls else calls_data[0]
+    main_sup = max(intraday_puts, key=lambda x: x["oi"]) if intraday_puts else puts_data[0]
 
     max_call_add = max(calls_data, key=lambda x: x["chg"]) if calls_data else None
     max_put_add = max(puts_data, key=lambda x: x["chg"]) if puts_data else None
@@ -699,7 +704,7 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
 </html>
 """
 
-# ==================== QUANTUM REVERSAL MATRIX (EXACT MOUNTED TO RESPECTIVE CURVES) ====================
+# ==================== QUANTUM REVERSAL MATRIX (EXACT HARI MASTER RADAR) ====================
 OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="gu">
 <head>
@@ -777,7 +782,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         #streamCanvas { width: 100%; height: 100%; display: block; }
 
         .strike-nodes-col {
-            width: 410px;
+            width: 400px;
             max-width: 48%;
             background: #080d16;
             border-left: 1.5px solid #142033;
@@ -817,6 +822,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         .node-put { border-left: 4px solid var(--red-glow); }
         
         .badge-atm { background: rgba(0, 240, 255, 0.25); color: var(--cyan-glow); border: 1.2px solid var(--cyan-glow); padding: 1px 5px; border-radius: 3px; font-weight: 900; font-size: 10px; }
+        .badge-itm { background: rgba(192, 132, 252, 0.25); color: var(--purple-glow); border: 1.2px solid var(--purple-glow); padding: 1px 5px; border-radius: 3px; font-weight: 900; font-size: 10px; }
         .badge-otm { background: rgba(100, 116, 139, 0.25); color: #cbd5e1; padding: 1px 5px; border-radius: 3px; font-size: 10px; font-weight: 800; }
 
         .strike-card-node.atm-node-active {
@@ -890,6 +896,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             100% { transform: translateX(-100%); } 
         }
 
+        /* MOBILE RESPONSIVE SMOOTH SCROLL */
         @media (max-width: 768px) {
             body { overflow-y: auto !important; height: auto !important; }
             .cyber-header { height: 32px; padding: 0 8px; }
@@ -913,7 +920,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 min-height: 600px !important;
             }
             .strike-card-node { font-size: 11.5px !important; padding: 3px 6px !important; }
-            .badge-atm, .badge-otm { display: inline-block; font-size: 8.5px !important; padding: 0 2px !important; }
+            .badge-atm, .badge-itm, .badge-otm { display: inline-block; font-size: 8.5px !important; padding: 0 2px !important; }
             .spot-axis-divider { height: 22px !important; font-size: 11px !important; margin: 2px 0 !important; }
             .news-radar-deck { height: 32px; padding: 0 6px; }
             .radar-badge-box { font-size: 8.5px; padding: 2px 4px; }
@@ -1088,7 +1095,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             }
         }
 
-        // FLOATING BADGE FUNCTION - EXACT MOUNT ON INDIVIDUAL LINE
+        // FLOATING BADGE FOR LIVE + / - OI CHANGE MOUNTED TO EXACT SAME LINE
         function drawFloatingOIBadge(x, y, text, isPositive, isNegative, isMain, isAtm) {
             ctx.save();
             ctx.font = 'bold 9.5px monospace, sans-serif';
@@ -1099,7 +1106,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             let bx = x - (bw / 2);
             let by = y - (bh / 2);
 
-            let borderColor = isMain ? '#ff2255' : (isAtm ? '#00f0ff' : (isPositive ? '#00ff88' : (isNegative ? '#ff2255' : '#334155')));
+            let borderColor = isMain ? (isNegative ? '#ff2255' : '#00ff88') : (isAtm ? '#00f0ff' : (isPositive ? '#00ff88' : (isNegative ? '#ff2255' : '#334155')));
             let glowColor = borderColor;
             let textColor = isPositive ? '#00ff88' : (isNegative ? '#ff2255' : '#e2e8f0');
 
@@ -1130,16 +1137,17 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             const endX = canvas.width;
             const t = Date.now() * 0.0025;
 
-            // 1. CALL LINES (Pratyek line var swatantrapane badge float hoto)
+            // 1. CALL LINES (Pot-potani line par j badge mount thashe)
             callNodePositions.forEach((targetY, i) => {
                 let callItem = (streamData && streamData.calls && streamData.calls[i]) ? streamData.calls[i] : null;
                 let isMain = (streamData && streamData.main_res && callItem && callItem.strike === streamData.main_res.strike);
                 let isAtm = (callItem && callItem.is_atm);
+                let isItm = (callItem && callItem.type_tag === "ITM");
                 
-                let lineColor = isMain ? '#ff2255' : (isAtm ? '#00f0ff' : `rgba(0, 255, 136, ${0.30 + (i * 0.08)})`);
+                let lineColor = isMain ? '#00ff88' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : `rgba(0, 255, 136, ${0.30 + (i * 0.08)})`));
                 
                 ctx.beginPath();
-                ctx.lineWidth = isMain ? 3.0 : (isAtm ? 2.4 : 1.4);
+                ctx.lineWidth = isMain ? 2.8 : (isAtm ? 2.4 : 1.4);
                 ctx.strokeStyle = lineColor;
 
                 let waveOffset = Math.sin(t + i * 0.7) * 7;
@@ -1157,13 +1165,13 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 let py = Math.pow(1 - pProg, 3) * startY + 3 * Math.pow(1 - pProg, 2) * pProg * cp1y + 3 * (1 - pProg) * Math.pow(pProg, 2) * cp2y + Math.pow(pProg, 3) * targetY;
 
                 ctx.beginPath();
-                ctx.fillStyle = isMain ? '#ff2255' : (isAtm ? '#00f0ff' : '#00ff88');
-                ctx.arc(px, py, isMain ? 3.8 : (isAtm ? 3.0 : 2.0), 0, Math.PI * 2);
+                ctx.fillStyle = isMain ? '#ffffff' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : '#00ff88'));
+                ctx.arc(px, py, isMain ? 3.5 : (isAtm ? 3.0 : 2.0), 0, Math.PI * 2);
                 ctx.fill();
 
-                // EXACT ON-LINE POSITIONING SATHI MATH (Overlapping nahi hot)
+                // EXACT ON-CURVE BADGE FOR EACH SPECIFIC CALL LINE (NO CROSSING)
                 if (callItem) {
-                    let lxProg = 0.55 + ((i % 3) * 0.08);
+                    let lxProg = 0.62;
                     let lx = Math.pow(1 - lxProg, 3) * startX + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1x + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * endX;
                     let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2y + Math.pow(lxProg, 3) * targetY;
                     
@@ -1172,16 +1180,17 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 }
             });
 
-            // 2. PUT LINES (Pratyek line var swatantrapane badge float hoto)
+            // 2. PUT LINES (Pot-potani line par j badge mount thashe)
             putNodePositions.forEach((targetY, i) => {
                 let putItem = (streamData && streamData.puts && streamData.puts[i]) ? streamData.puts[i] : null;
                 let isMain = (streamData && streamData.main_sup && putItem && putItem.strike === streamData.main_sup.strike);
                 let isAtm = (putItem && putItem.is_atm);
+                let isItm = (putItem && putItem.type_tag === "ITM");
                 
-                let lineColor = isMain ? '#00ff88' : (isAtm ? '#00f0ff' : `rgba(255, 34, 85, ${0.30 + (i * 0.08)})`);
+                let lineColor = isMain ? '#ff2255' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : `rgba(255, 34, 85, ${0.30 + (i * 0.08)})`));
                 
                 ctx.beginPath();
-                ctx.lineWidth = isMain ? 3.0 : (isAtm ? 2.4 : 1.4);
+                ctx.lineWidth = isMain ? 2.8 : (isAtm ? 2.4 : 1.4);
                 ctx.strokeStyle = lineColor;
 
                 let waveOffset = Math.sin(t + i * 0.7) * 7;
@@ -1199,13 +1208,13 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 let py = Math.pow(1 - pProg, 3) * startY + 3 * Math.pow(1 - pProg, 2) * pProg * cp1y + 3 * (1 - pProg) * Math.pow(pProg, 2) * cp2y + Math.pow(pProg, 3) * targetY;
 
                 ctx.beginPath();
-                ctx.fillStyle = isMain ? '#00ff88' : (isAtm ? '#00f0ff' : '#ff2255');
-                ctx.arc(px, py, isMain ? 3.8 : (isAtm ? 3.0 : 2.0), 0, Math.PI * 2);
+                ctx.fillStyle = isMain ? '#ffffff' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : '#ff2255'));
+                ctx.arc(px, py, isMain ? 3.5 : (isAtm ? 3.0 : 2.0), 0, Math.PI * 2);
                 ctx.fill();
 
-                // EXACT ON-LINE POSITIONING SATHI MATH (Overlapping nahi hot)
+                // EXACT ON-CURVE BADGE FOR EACH SPECIFIC PUT LINE (NO CROSSING)
                 if (putItem) {
-                    let lxProg = 0.55 + ((i % 3) * 0.08);
+                    let lxProg = 0.62;
                     let lx = Math.pow(1 - lxProg, 3) * startX + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1x + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * endX;
                     let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2y + Math.pow(lxProg, 3) * targetY;
                     
