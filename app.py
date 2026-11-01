@@ -373,6 +373,8 @@ def get_quantum_oi_stream():
     
     ist_time_str = get_current_ist_time().strftime("%I:%M:%S %p")
 
+    # Sequence Order from Top to Bottom:
+    # CALLS (Top to Spot Axis): 4 OTM -> ATM -> 2 ITM
     call_steps = [4, 3, 2, 1, 0, -1, -2]
     for i in call_steps:
         stk = atm + (i * 50)
@@ -401,7 +403,11 @@ def get_quantum_oi_stream():
             "is_atm": (stk == atm)
         })
 
-    put_steps = [-2, -1, 0, 1, 2, 3, 4]
+    # PUTS (Spot Axis to Bottom): ATM -> 2 ITM -> 4 OTM
+    # Near Spot Axis: ATM (0)
+    # Then ITM (+1, +2: 23100, 23150)
+    # Then OTM (-1, -2, -3, -4: 23000, 22950, 22900, 22850)
+    put_steps = [0, -1, -2, 1, 2, 3, 4]
     for i in put_steps:
         stk = atm - (i * 50)
         tok = token_map.get(stk, {}).get("PE", "")
@@ -473,7 +479,7 @@ def get_quantum_oi_stream():
 TERMINAL_HTML = r"""<!DOCTYPE html>
 <html>
 <head>
-    <title>StockMojo Terminal Pro - Angel One Live</title>
+    <title>Hari Master Pro Terminal - Live</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
@@ -481,7 +487,7 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { background: #080b11; color: #d1d4dc; font-family: -apple-system, BlinkMacSystemFont, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
         .header-bar { height: 44px; background: #0e131f; border-bottom: 1px solid #1a2234; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; z-index: 20; }
-        .brand { font-size: 14px; font-weight: 800; color: #38bdf8; display: flex; align-items: center; gap: 6px; }
+        .brand { font-size: 15px; font-weight: 900; color: #38bdf8; display: flex; align-items: center; gap: 6px; }
         .spot-badge { font-weight: 800; color: #00ff88; background: #062319; border: 1px solid #00ff88; padding: 4px 10px; border-radius: 4px; font-size: 12px; }
         .expiry-select { background: #141c2c; border: 1px solid #38bdf8; color: #38bdf8; padding: 4px 8px; border-radius: 4px; font-size: 11.5px; font-weight: 700; outline: none; cursor: pointer; }
         .btn-nav-oi { background: #04251f; border: 1.5px solid #00ff88; color: #00ff88; padding: 5px 12px; border-radius: 4px; font-size: 11px; font-weight: 800; text-decoration: none; box-shadow: 0 0 10px rgba(0,255,136,0.2); }
@@ -494,8 +500,8 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
         .chain-panel { flex: 3.2; background: #0e131f; border-left: 1px solid #1a2234; display: flex; flex-direction: column; overflow: hidden; }
         .chain-header-bar { padding: 8px 10px; background: #111726; border-bottom: 1px solid #1a2234; display: flex; justify-content: space-between; align-items: center; }
         .chain-scroll { flex: 1; overflow-y: auto; }
-        table { width: 100%; border-collapse: collapse; font-size: 10.5px; text-align: center; }
-        th { background: #161e2e; padding: 6px 4px; color: #94a3b8; position: sticky; top: 0; z-index: 2; font-size: 9.5px; }
+        table { width: 100%; border-collapse: collapse; font-size: 11px; text-align: center; }
+        th { background: #161e2e; padding: 6px 4px; color: #94a3b8; position: sticky; top: 0; z-index: 2; font-size: 10px; }
         td { padding: 5px 2px; border-bottom: 1px solid #141b2b; cursor: pointer; }
         tr:hover { background: #141d2f; }
         .atm-row { background: rgba(56, 189, 248, 0.12) !important; font-weight: bold; border-left: 2px solid #38bdf8; }
@@ -506,7 +512,7 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
 </head>
 <body>
     <div class="header-bar">
-        <div class="brand"><span>⚡ StockMojo Pro Terminal</span></div>
+        <div class="brand"><span>⚡ Hari Master Pro Terminal</span></div>
         <div style="display:flex; align-items:center; gap:10px;">
             <label style="font-size:11px; color:#94a3b8; font-weight:bold;">EXPIRY:</label>
             <select class="expiry-select" id="expiryDropdown" onchange="onExpiryChange()">
@@ -694,13 +700,13 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
 </html>
 """
 
-# ==================== QUANTUM REVERSAL MATRIX (BIGGER FONTS + PERFECT FIT + ATM GUIDES) ====================
+# ==================== QUANTUM REVERSAL MATRIX (EXACT HARI MASTER RADAR) ====================
 OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="gu">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Quantum OI Reversal & Transfer Matrix</title>
+    <title>Hari Master Quantum OI Radar</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Gujarati:wght@500;700;800;900&display=swap" rel="stylesheet">
@@ -727,8 +733,8 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             padding: 0 14px;
             flex-shrink: 0;
         }
-        .header-title { font-size: 13.5px; font-weight: 900; color: var(--cyan-glow); display: flex; align-items: center; gap: 6px; }
-        .btn-back-chart { background: #101c2e; border: 1.2px solid var(--cyan-glow); color: var(--cyan-glow); padding: 3px 10px; border-radius: 4px; font-size: 11px; text-decoration: none; font-weight: 800; }
+        .header-title { font-size: 14.5px; font-weight: 900; color: var(--cyan-glow); display: flex; align-items: center; gap: 8px; }
+        .btn-back-chart { background: #101c2e; border: 1.3px solid var(--cyan-glow); color: var(--cyan-glow); padding: 3px 10px; border-radius: 4px; font-size: 11px; text-decoration: none; font-weight: 800; }
 
         .signal-strip {
             height: 40px;
@@ -740,10 +746,10 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             padding: 0 14px;
             flex-shrink: 0;
         }
-        .verdict-tag { font-size: 13.5px; font-weight: 900; }
+        .verdict-tag { font-size: 14px; font-weight: 900; }
 
         .major-node-box { display: flex; gap: 10px; align-items: center; }
-        .node-badge { padding: 3px 10px; border-radius: 4px; font-size: 11px; font-weight: 900; display: flex; align-items: center; gap: 5px; }
+        .node-badge { padding: 3px 10px; border-radius: 4px; font-size: 11.5px; font-weight: 900; display: flex; align-items: center; gap: 5px; }
         .res-node { background: rgba(255, 34, 85, 0.2); border: 1.5px solid var(--red-glow); color: var(--red-glow); }
         .sup-node { background: rgba(0, 255, 136, 0.2); border: 1.5px solid var(--green-glow); color: var(--green-glow); }
 
@@ -765,8 +771,8 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         #streamCanvas { width: 100%; height: 100%; display: block; }
 
         .strike-nodes-col {
-            width: 380px;
-            max-width: 46%;
+            width: 400px;
+            max-width: 48%;
             background: #080d16;
             border-left: 1.5px solid #142033;
             display: flex;
@@ -784,49 +790,49 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             flex-direction: column;
             justify-content: space-around;
             padding: 1px 0;
-            gap: 1px;
+            gap: 2px;
         }
 
-        /* BIGGER, BOLDER STRIKE CARD */
+        /* BIGGER AND BOLDER CARDS */
         .strike-card-node {
             background: #0d1522;
-            border: 1px solid #1f2f45;
+            border: 1.2px solid #1f2f45;
             border-radius: 5px;
-            padding: 3px 8px;
+            padding: 3px 10px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            font-size: 12.5px;
+            font-size: 13px;
             position: relative;
             box-shadow: 0 1px 4px rgba(0,0,0,0.5);
             white-space: nowrap;
         }
-        .node-call { border-left: 3.5px solid var(--green-glow); }
-        .node-put { border-left: 3.5px solid var(--red-glow); }
+        .node-call { border-left: 4px solid var(--green-glow); }
+        .node-put { border-left: 4px solid var(--red-glow); }
         
-        .badge-atm { background: rgba(0, 240, 255, 0.25); color: var(--cyan-glow); border: 1.2px solid var(--cyan-glow); padding: 1px 4px; border-radius: 3px; font-weight: 900; font-size: 9.5px; }
-        .badge-itm { background: rgba(192, 132, 252, 0.25); color: var(--purple-glow); border: 1.2px solid var(--purple-glow); padding: 1px 4px; border-radius: 3px; font-weight: 900; font-size: 9.5px; }
-        .badge-otm { background: rgba(100, 116, 139, 0.25); color: #cbd5e1; padding: 1px 4px; border-radius: 3px; font-size: 9.5px; font-weight: 800; }
+        .badge-atm { background: rgba(0, 240, 255, 0.25); color: var(--cyan-glow); border: 1.2px solid var(--cyan-glow); padding: 1px 5px; border-radius: 3px; font-weight: 900; font-size: 10px; }
+        .badge-itm { background: rgba(192, 132, 252, 0.25); color: var(--purple-glow); border: 1.2px solid var(--purple-glow); padding: 1px 5px; border-radius: 3px; font-weight: 900; font-size: 10px; }
+        .badge-otm { background: rgba(100, 116, 139, 0.25); color: #cbd5e1; padding: 1px 5px; border-radius: 3px; font-size: 10px; font-weight: 800; }
 
         .strike-card-node.atm-node-active {
-            border: 1.8px solid var(--cyan-glow) !important;
-            background: rgba(56, 189, 248, 0.22) !important;
-            box-shadow: 0 0 10px rgba(0,240,255,0.3) !important;
+            border: 2px solid var(--cyan-glow) !important;
+            background: rgba(56, 189, 248, 0.25) !important;
+            box-shadow: 0 0 12px rgba(0,240,255,0.4) !important;
         }
         .strike-card-node.main-res-active {
-            border: 1.8px solid var(--red-glow) !important;
-            background: rgba(255, 34, 85, 0.22) !important;
+            border: 2px solid var(--red-glow) !important;
+            background: rgba(255, 34, 85, 0.25) !important;
         }
         .strike-card-node.main-sup-active {
-            border: 1.8px solid var(--green-glow) !important;
-            background: rgba(0, 255, 136, 0.22) !important;
+            border: 2px solid var(--green-glow) !important;
+            background: rgba(0, 255, 136, 0.25) !important;
         }
 
-        .glow-plus { color: var(--green-glow); font-weight: 900; font-size: 12px; }
-        .glow-minus { color: var(--red-glow); font-weight: 900; font-size: 12px; }
+        .glow-plus { color: var(--green-glow); font-weight: 900; font-size: 12.5px; }
+        .glow-minus { color: var(--red-glow); font-weight: 900; font-size: 12.5px; }
 
         .spot-axis-divider {
-            height: 24px;
+            height: 25px;
             background: #ffffff;
             border-radius: 4px;
             color: #000;
@@ -835,8 +841,8 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             justify-content: space-between;
             padding: 0 10px;
             font-weight: 900;
-            font-size: 12px;
-            box-shadow: 0 0 12px rgba(255,255,255,0.8);
+            font-size: 12.5px;
+            box-shadow: 0 0 14px rgba(255,255,255,0.9);
             margin: 2px 0;
             z-index: 5;
             flex-shrink: 0;
@@ -867,7 +873,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             display: inline-block;
             white-space: nowrap;
             color: #f8fafc;
-            font-size: 12.5px;
+            font-size: 13px;
             font-weight: 700;
             animation: slowMarquee 45s linear infinite;
         }
@@ -876,19 +882,18 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             100% { transform: translateX(-100%); } 
         }
 
-        /* MOBILE ADJUSTMENTS: 100% VISIBLE SCREEN WITHOUT VERTICAL SCROLL */
         @media (max-width: 768px) {
             .cyber-header { height: 32px; padding: 0 8px; }
-            .header-title { font-size: 11px; }
+            .header-title { font-size: 11.5px; }
             .btn-back-chart { font-size: 9.5px; padding: 2px 6px; }
             .signal-strip { height: 34px; padding: 0 8px; }
-            .verdict-tag { font-size: 11px; }
-            .node-badge { font-size: 9.5px; padding: 2px 6px; }
+            .verdict-tag { font-size: 11.5px; }
+            .node-badge { font-size: 10px; padding: 2px 6px; }
             .stream-workspace { height: calc(100vh - 96px) !important; }
-            .strike-nodes-col { width: 280px !important; max-width: 52% !important; padding: 1px 4px !important; }
-            .strike-card-node { font-size: 11px !important; padding: 2px 5px !important; }
-            .badge-atm, .badge-itm, .badge-otm { display: inline-block; font-size: 8px !important; padding: 0 2px !important; }
-            .spot-axis-divider { height: 20px !important; font-size: 10.5px !important; margin: 1px 0 !important; }
+            .strike-nodes-col { width: 290px !important; max-width: 53% !important; padding: 1px 4px !important; }
+            .strike-card-node { font-size: 11.5px !important; padding: 2px 5px !important; }
+            .badge-atm, .badge-itm, .badge-otm { display: inline-block; font-size: 8.5px !important; padding: 0 2px !important; }
+            .spot-axis-divider { height: 20px !important; font-size: 11px !important; margin: 1px 0 !important; }
             .news-radar-deck { height: 30px; padding: 0 6px; }
             .radar-badge-box { font-size: 8.5px; padding: 2px 4px; }
             .news-scroll-text { font-size: 11px; }
@@ -898,10 +903,10 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 <body>
     <div class="cyber-header">
         <div class="header-title">
-            <span style="display:inline-block; width:7px; height:7px; background:var(--cyan-glow); border-radius:50%; box-shadow:0 0 6px var(--cyan-glow);"></span>
-            QUANTUM OI RADAR
+            <span style="display:inline-block; width:8px; height:8px; background:var(--cyan-glow); border-radius:50%; box-shadow:0 0 8px var(--cyan-glow);"></span>
+            ⚡ HARI MASTER QUANTUM OI RADAR
         </div>
-        <div style="font-size:10.5px; color:var(--text-dim);" id="expTimeTag">EXP: -- | SYNC: --</div>
+        <div style="font-size:11px; color:var(--text-dim);" id="expTimeTag">EXP: -- | SYNC: --</div>
         <a href="/" class="btn-back-chart">⬅ CHARTS</a>
     </div>
 
@@ -924,7 +929,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 
         <div style="text-align:right;">
             <div style="font-size:9px; color:var(--text-dim); text-transform:uppercase;">ACTION:</div>
-            <div style="font-size:11px; font-weight:900; color:var(--cyan-glow);" id="actionText">CALCULATING...</div>
+            <div style="font-size:11.5px; font-weight:900; color:var(--cyan-glow);" id="actionText">CALCULATING...</div>
         </div>
     </div>
 
@@ -968,8 +973,6 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         let streamData = null;
         let callNodePositions = [];
         let putNodePositions = [];
-        let atmCallY = null;
-        let atmPutY = null;
 
         function resize() {
             canvas.width = container.clientWidth;
@@ -1041,8 +1044,6 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         function captureTargetCoordinates() {
             callNodePositions = [];
             putNodePositions = [];
-            atmCallY = null;
-            atmPutY = null;
             const containerRect = container.getBoundingClientRect();
 
             if (streamData && streamData.calls) {
@@ -1050,9 +1051,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                     let el = document.getElementById(`cNode_${idx}`);
                     if (el) {
                         let r = el.getBoundingClientRect();
-                        let targetCenter = r.top - containerRect.top + (r.height / 2);
-                        callNodePositions.push(targetCenter);
-                        if (c.is_atm) atmCallY = targetCenter;
+                        callNodePositions.push(r.top - containerRect.top + (r.height / 2));
                     }
                 });
             }
@@ -1062,9 +1061,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                     let el = document.getElementById(`pNode_${idx}`);
                     if (el) {
                         let r = el.getBoundingClientRect();
-                        let targetCenter = r.top - containerRect.top + (r.height / 2);
-                        putNodePositions.push(targetCenter);
-                        if (p.is_atm) atmPutY = targetCenter;
+                        putNodePositions.push(r.top - containerRect.top + (r.height / 2));
                     }
                 });
             }
@@ -1108,17 +1105,17 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             const t = Date.now() * 0.0025;
             const isMobile = window.innerWidth <= 768;
 
-            // 1. CALL LINES
+            // 1. CALL LINES (TOP TO ATM)
             callNodePositions.forEach((targetY, i) => {
                 let callItem = (streamData && streamData.calls && streamData.calls[i]) ? streamData.calls[i] : null;
                 let isMain = (streamData && streamData.main_res && callItem && callItem.strike === streamData.main_res.strike);
                 let isAtm = (callItem && callItem.is_atm);
                 let isItm = (callItem && callItem.type_tag === "ITM");
                 
-                let lineColor = isMain ? '#00ff88' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : `rgba(0, 255, 136, ${0.25 + (i * 0.08)})`));
+                let lineColor = isMain ? '#00ff88' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : `rgba(0, 255, 136, ${0.30 + (i * 0.08)})`));
                 
                 ctx.beginPath();
-                ctx.lineWidth = isMain ? 2.8 : (isAtm ? 2.2 : 1.3);
+                ctx.lineWidth = isMain ? 2.8 : (isAtm ? 2.4 : 1.4);
                 ctx.strokeStyle = lineColor;
 
                 let waveOffset = Math.sin(t + i * 0.7) * 7;
@@ -1137,7 +1134,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 
                 ctx.beginPath();
                 ctx.fillStyle = isMain ? '#ffffff' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : '#00ff88'));
-                ctx.arc(px, py, isMain ? 3.5 : (isAtm ? 2.8 : 2.0), 0, Math.PI * 2);
+                ctx.arc(px, py, isMain ? 3.5 : (isAtm ? 3.0 : 2.0), 0, Math.PI * 2);
                 ctx.fill();
 
                 if (callItem && !isMobile) {
@@ -1152,17 +1149,17 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 }
             });
 
-            // 2. PUT LINES (EXACT SYMMETRICAL MIRROR)
+            // 2. PUT LINES (ATM TO BOTTOM OTM)
             putNodePositions.forEach((targetY, i) => {
                 let putItem = (streamData && streamData.puts && streamData.puts[i]) ? streamData.puts[i] : null;
                 let isMain = (streamData && streamData.main_sup && putItem && putItem.strike === streamData.main_sup.strike);
                 let isAtm = (putItem && putItem.is_atm);
                 let isItm = (putItem && putItem.type_tag === "ITM");
                 
-                let lineColor = isMain ? '#ff2255' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : `rgba(255, 34, 85, ${0.25 + (i * 0.08)})`));
+                let lineColor = isMain ? '#ff2255' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : `rgba(255, 34, 85, ${0.30 + (i * 0.08)})`));
                 
                 ctx.beginPath();
-                ctx.lineWidth = isMain ? 2.8 : (isAtm ? 2.2 : 1.3);
+                ctx.lineWidth = isMain ? 2.8 : (isAtm ? 2.4 : 1.4);
                 ctx.strokeStyle = lineColor;
 
                 let waveOffset = Math.sin(t + i * 0.7) * 7;
@@ -1181,13 +1178,13 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 
                 ctx.beginPath();
                 ctx.fillStyle = isMain ? '#ffffff' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : '#ff2255'));
-                ctx.arc(px, py, isMain ? 3.5 : (isAtm ? 2.8 : 2.0), 0, Math.PI * 2);
+                ctx.arc(px, py, isMain ? 3.5 : (isAtm ? 3.0 : 2.0), 0, Math.PI * 2);
                 ctx.fill();
 
                 if (putItem && !isMobile) {
                     let lxProg = 0.76;
                     let lx = Math.pow(1 - lxProg, 3) * startX + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1x + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * endX;
-                    let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * targetY;
+                    let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2y + Math.pow(lxProg, 3) * targetY;
                     
                     let labelText = `${putItem.strike} PE: ${putItem.chg_str}`;
                     let labelBorderColor = isMain ? '#ff2255' : (isAtm ? '#00f0ff' : '#1a2a44');
@@ -1195,31 +1192,6 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                     drawLineLabel(lx, ly, labelText, labelBorderColor, labelTextColor);
                 }
             });
-
-            // 3. SPOT TO ATM CONNECTOR GUIDE LINES (DIRECT BRIGHT CYAN GUIDE)
-            if (atmCallY !== null) {
-                ctx.save();
-                ctx.setLineDash([4, 4]);
-                ctx.strokeStyle = 'rgba(0, 240, 255, 0.75)';
-                ctx.lineWidth = 1.5;
-                ctx.beginPath();
-                ctx.moveTo(canvas.width * 0.55, startY);
-                ctx.lineTo(endX, atmCallY);
-                ctx.stroke();
-                ctx.restore();
-            }
-
-            if (atmPutY !== null) {
-                ctx.save();
-                ctx.setLineDash([4, 4]);
-                ctx.strokeStyle = 'rgba(0, 240, 255, 0.75)';
-                ctx.lineWidth = 1.5;
-                ctx.beginPath();
-                ctx.moveTo(canvas.width * 0.55, startY);
-                ctx.lineTo(endX, atmPutY);
-                ctx.stroke();
-                ctx.restore();
-            }
 
             // Central White Spot Line
             ctx.beginPath();
