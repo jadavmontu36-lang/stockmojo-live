@@ -364,7 +364,7 @@ def get_quantum_oi_stream():
     all_exp = get_all_active_expiries()
     active_exp = all_exp[0] if all_exp else ""
     
-    strikes = [atm + (i * 50) for i in range(-4, 5)]
+    strikes = [atm + (i * 50) for i in range(-5, 6)]
     token_map, tokens_to_fetch = get_tokens_by_expiry_and_strikes(active_exp, strikes)
     live_quotes = fetch_angel_market_data(tokens_to_fetch)
 
@@ -373,9 +373,9 @@ def get_quantum_oi_stream():
     
     ist_time_str = get_current_ist_time().strftime("%I:%M:%S %p")
 
-    # Sequence Order from Top to Bottom:
-    # CALLS (Top to Spot Axis): 4 OTM -> ATM -> 2 ITM
-    call_steps = [4, 3, 2, 1, 0, -1, -2]
+    # CALL STRUKES ORDER: Top (Highest OTM) down to Spot Axis (ATM)
+    # [23250, 23200, 23150, 23100, 23000(ITM), 22950(ITM), 23050(ATM)]
+    call_steps = [4, 3, 2, 1, -1, -2, 0]
     for i in call_steps:
         stk = atm + (i * 50)
         tok = token_map.get(stk, {}).get("CE", "")
@@ -403,13 +403,26 @@ def get_quantum_oi_stream():
             "is_atm": (stk == atm)
         })
 
-    # PUTS (Spot Axis to Bottom): ATM -> 2 ITM -> 4 OTM
-    # Near Spot Axis: ATM (0)
-    # Then ITM (+1, +2: 23100, 23150)
-    # Then OTM (-1, -2, -3, -4: 23000, 22950, 22900, 22850)
-    put_steps = [0, -1, -2, 1, 2, 3, 4]
+    # PUT STRIKES ORDER: From Spot Axis (ATM) down to Deep OTM
+    # [23050(ATM), 23100(ITM), 23150(ITM), 23000(OTM), 22950(OTM), 22900(OTM), 22850(OTM)]
+    put_steps = [0, 1, 2, -1, -2, -3, -4]
     for i in put_steps:
-        stk = atm - (i * 50)
+        stk = atm - (i * 50) if i <= 0 else atm + (i * 50)
+        # Accurate strikes for Put:
+        # i=0: 23050 (ATM)
+        # i=1: 23100 (ITM)
+        # i=2: 23150 (ITM)
+        # i=-1: 23000 (OTM)
+        # i=-2: 22950 (OTM)
+        # i=-3: 22900 (OTM)
+        # i=-4: 22850 (OTM)
+        if i == 0:
+            stk = atm
+        elif i > 0:
+            stk = atm + (i * 50) # ITM puts
+        else:
+            stk = atm + (i * 50) # OTM puts (i is negative)
+
         tok = token_map.get(stk, {}).get("PE", "")
         q = live_quotes.get(tok, {})
         real_oi = int(q.get("oi", 0))
@@ -439,7 +452,7 @@ def get_quantum_oi_stream():
     intraday_puts = [p for p in puts_data if p["strike"] <= atm]
 
     main_res = max(intraday_calls, key=lambda x: x["oi"]) if intraday_calls else calls_data[0]
-    main_sup = max(intraday_puts, key=lambda x: x["oi"]) if intraday_puts else puts_data[-1]
+    main_sup = max(intraday_puts, key=lambda x: x["oi"]) if intraday_puts else puts_data[0]
 
     max_call_add = max(calls_data, key=lambda x: x["chg"]) if calls_data else None
     max_put_add = max(puts_data, key=lambda x: x["chg"]) if puts_data else None
@@ -793,7 +806,6 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             gap: 2px;
         }
 
-        /* BIGGER AND BOLDER CARDS */
         .strike-card-node {
             background: #0d1522;
             border: 1.2px solid #1f2f45;
@@ -1067,35 +1079,6 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             }
         }
 
-        function drawLineLabel(x, y, text, badgeColor, textColor) {
-            ctx.save();
-            ctx.font = 'bold 10px monospace, sans-serif';
-            let textWidth = ctx.measureText(text).width;
-            let padX = 5;
-            let bWidth = textWidth + (padX * 2);
-            let bHeight = 16;
-            let bx = x - (bWidth / 2);
-            let by = y - (bHeight / 2);
-
-            ctx.fillStyle = '#080d16';
-            ctx.strokeStyle = badgeColor;
-            ctx.lineWidth = 1.2;
-            ctx.shadowColor = badgeColor;
-            ctx.shadowBlur = 5;
-            
-            ctx.beginPath();
-            ctx.roundRect(bx, by, bWidth, bHeight, 3);
-            ctx.fill();
-            ctx.stroke();
-
-            ctx.shadowBlur = 0;
-            ctx.fillStyle = textColor;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(text, x, y);
-            ctx.restore();
-        }
-
         function renderNerveMatrix() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -1103,9 +1086,8 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             const startY = canvas.height / 2;
             const endX = canvas.width;
             const t = Date.now() * 0.0025;
-            const isMobile = window.innerWidth <= 768;
 
-            // 1. CALL LINES (TOP TO ATM)
+            // 1. CALL LINES (NO DASHED LINES, NO RANDOM LABELS)
             callNodePositions.forEach((targetY, i) => {
                 let callItem = (streamData && streamData.calls && streamData.calls[i]) ? streamData.calls[i] : null;
                 let isMain = (streamData && streamData.main_res && callItem && callItem.strike === streamData.main_res.strike);
@@ -1136,20 +1118,9 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 ctx.fillStyle = isMain ? '#ffffff' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : '#00ff88'));
                 ctx.arc(px, py, isMain ? 3.5 : (isAtm ? 3.0 : 2.0), 0, Math.PI * 2);
                 ctx.fill();
-
-                if (callItem && !isMobile) {
-                    let lxProg = 0.76;
-                    let lx = Math.pow(1 - lxProg, 3) * startX + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1x + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * endX;
-                    let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * targetY;
-                    
-                    let labelText = `${callItem.strike} CE: ${callItem.chg_str}`;
-                    let labelBorderColor = isMain ? '#00ff88' : (isAtm ? '#00f0ff' : '#1a2a44');
-                    let labelTextColor = callItem.chg > 0 ? '#00ff88' : (callItem.chg < 0 ? '#ff2255' : '#94a3b8');
-                    drawLineLabel(lx, ly, labelText, labelBorderColor, labelTextColor);
-                }
             });
 
-            // 2. PUT LINES (ATM TO BOTTOM OTM)
+            // 2. PUT LINES (NO DASHED LINES, CLEAN FLUID SPREAD)
             putNodePositions.forEach((targetY, i) => {
                 let putItem = (streamData && streamData.puts && streamData.puts[i]) ? streamData.puts[i] : null;
                 let isMain = (streamData && streamData.main_sup && putItem && putItem.strike === streamData.main_sup.strike);
@@ -1180,17 +1151,6 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 ctx.fillStyle = isMain ? '#ffffff' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : '#ff2255'));
                 ctx.arc(px, py, isMain ? 3.5 : (isAtm ? 3.0 : 2.0), 0, Math.PI * 2);
                 ctx.fill();
-
-                if (putItem && !isMobile) {
-                    let lxProg = 0.76;
-                    let lx = Math.pow(1 - lxProg, 3) * startX + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1x + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * endX;
-                    let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2y + Math.pow(lxProg, 3) * targetY;
-                    
-                    let labelText = `${putItem.strike} PE: ${putItem.chg_str}`;
-                    let labelBorderColor = isMain ? '#ff2255' : (isAtm ? '#00f0ff' : '#1a2a44');
-                    let labelTextColor = putItem.chg > 0 ? '#00ff88' : (putItem.chg < 0 ? '#ff2255' : '#94a3b8');
-                    drawLineLabel(lx, ly, labelText, labelBorderColor, labelTextColor);
-                }
             });
 
             // Central White Spot Line
