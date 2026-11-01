@@ -43,7 +43,6 @@ if os.path.exists(json_path):
 
 BASELINE_OI_MAP = {}
 
-# Indian Standard Time (IST) Helper
 def get_current_ist_time():
     utc_now = datetime.datetime.utcnow()
     ist_now = utc_now + datetime.timedelta(hours=5, minutes=30)
@@ -372,7 +371,6 @@ def get_quantum_oi_stream():
     calls_data = []
     puts_data = []
     
-    # Exact Indian Standard Time (IST)
     ist_time_str = get_current_ist_time().strftime("%I:%M:%S %p")
 
     call_steps = [4, 3, 2, 1, 0, -1, -2]
@@ -696,7 +694,7 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
 </html>
 """
 
-# ==================== QUANTUM REVERSAL MATRIX (EXACT IST TIME & BALANCED) ====================
+# ==================== QUANTUM REVERSAL MATRIX (BIGGER FONTS + PERFECT FIT + ATM GUIDES) ====================
 OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="gu">
 <head>
@@ -714,46 +712,46 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             --cyan-glow: #00f0ff;
             --gold-glow: #fbbf24;
             --purple-glow: #c084fc;
-            --text-dim: #64748b;
+            --text-dim: #94a3b8;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Noto Sans Gujarati', -apple-system, BlinkMacSystemFont, monospace, sans-serif; }
         body { background: var(--bg-deep); color: #fff; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
 
         .cyber-header {
-            height: 40px;
+            height: 38px;
             background: #090e17;
             border-bottom: 1.5px solid #142033;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 0 12px;
+            padding: 0 14px;
             flex-shrink: 0;
         }
-        .header-title { font-size: 13px; font-weight: 900; color: var(--cyan-glow); display: flex; align-items: center; gap: 6px; }
-        .btn-back-chart { background: #101c2e; border: 1px solid var(--cyan-glow); color: var(--cyan-glow); padding: 4px 8px; border-radius: 4px; font-size: 10.5px; text-decoration: none; font-weight: bold; }
+        .header-title { font-size: 13.5px; font-weight: 900; color: var(--cyan-glow); display: flex; align-items: center; gap: 6px; }
+        .btn-back-chart { background: #101c2e; border: 1.2px solid var(--cyan-glow); color: var(--cyan-glow); padding: 3px 10px; border-radius: 4px; font-size: 11px; text-decoration: none; font-weight: 800; }
 
         .signal-strip {
-            height: 44px;
+            height: 40px;
             background: #080d17;
             border-bottom: 1px solid #142033;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 0 12px;
+            padding: 0 14px;
             flex-shrink: 0;
         }
         .verdict-tag { font-size: 13.5px; font-weight: 900; }
 
-        .major-node-box { display: flex; gap: 8px; align-items: center; }
-        .node-badge { padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; display: flex; align-items: center; gap: 4px; }
-        .res-node { background: rgba(255, 34, 85, 0.15); border: 1.2px solid var(--red-glow); color: var(--red-glow); }
-        .sup-node { background: rgba(0, 255, 136, 0.15); border: 1.2px solid var(--green-glow); color: var(--green-glow); }
+        .major-node-box { display: flex; gap: 10px; align-items: center; }
+        .node-badge { padding: 3px 10px; border-radius: 4px; font-size: 11px; font-weight: 900; display: flex; align-items: center; gap: 5px; }
+        .res-node { background: rgba(255, 34, 85, 0.2); border: 1.5px solid var(--red-glow); color: var(--red-glow); }
+        .sup-node { background: rgba(0, 255, 136, 0.2); border: 1.5px solid var(--green-glow); color: var(--green-glow); }
 
         .stream-workspace {
             flex: 1;
             display: flex;
             width: 100%;
-            height: calc(100vh - 128px);
+            height: calc(100vh - 114px);
             position: relative;
             overflow: hidden;
         }
@@ -767,14 +765,14 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         #streamCanvas { width: 100%; height: 100%; display: block; }
 
         .strike-nodes-col {
-            width: 320px;
-            max-width: 45%;
+            width: 380px;
+            max-width: 46%;
             background: #080d16;
             border-left: 1.5px solid #142033;
             display: flex;
             flex-direction: column;
             justify-content: space-between;
-            padding: 4px 6px;
+            padding: 2px 8px;
             position: relative;
             height: 100%;
             flex-shrink: 0;
@@ -786,43 +784,46 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             flex-direction: column;
             justify-content: space-around;
             padding: 1px 0;
+            gap: 1px;
         }
 
+        /* BIGGER, BOLDER STRIKE CARD */
         .strike-card-node {
             background: #0d1522;
-            border: 1px solid #1a273b;
-            border-radius: 4px;
-            padding: 4px 6px;
+            border: 1px solid #1f2f45;
+            border-radius: 5px;
+            padding: 3px 8px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            font-size: 10.5px;
+            font-size: 12.5px;
             position: relative;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+            box-shadow: 0 1px 4px rgba(0,0,0,0.5);
             white-space: nowrap;
         }
-        .node-call { border-left: 3px solid var(--green-glow); }
-        .node-put { border-left: 3px solid var(--red-glow); }
+        .node-call { border-left: 3.5px solid var(--green-glow); }
+        .node-put { border-left: 3.5px solid var(--red-glow); }
         
-        .badge-atm { background: rgba(0, 240, 255, 0.2); color: var(--cyan-glow); border: 1px solid var(--cyan-glow); padding: 1px 3px; border-radius: 2px; font-weight: 800; font-size: 8.5px; }
-        .badge-itm { background: rgba(192, 132, 252, 0.2); color: var(--purple-glow); border: 1px solid var(--purple-glow); padding: 1px 3px; border-radius: 2px; font-weight: 800; font-size: 8.5px; }
-        .badge-otm { background: rgba(100, 116, 139, 0.2); color: #cbd5e1; padding: 1px 3px; border-radius: 2px; font-size: 8.5px; font-weight: 700; }
+        .badge-atm { background: rgba(0, 240, 255, 0.25); color: var(--cyan-glow); border: 1.2px solid var(--cyan-glow); padding: 1px 4px; border-radius: 3px; font-weight: 900; font-size: 9.5px; }
+        .badge-itm { background: rgba(192, 132, 252, 0.25); color: var(--purple-glow); border: 1.2px solid var(--purple-glow); padding: 1px 4px; border-radius: 3px; font-weight: 900; font-size: 9.5px; }
+        .badge-otm { background: rgba(100, 116, 139, 0.25); color: #cbd5e1; padding: 1px 4px; border-radius: 3px; font-size: 9.5px; font-weight: 800; }
 
         .strike-card-node.atm-node-active {
-            border: 1.3px solid var(--cyan-glow) !important;
-            background: rgba(56, 189, 248, 0.15) !important;
+            border: 1.8px solid var(--cyan-glow) !important;
+            background: rgba(56, 189, 248, 0.22) !important;
+            box-shadow: 0 0 10px rgba(0,240,255,0.3) !important;
         }
         .strike-card-node.main-res-active {
-            border: 1.3px solid var(--red-glow) !important;
-            background: rgba(255, 34, 85, 0.18) !important;
+            border: 1.8px solid var(--red-glow) !important;
+            background: rgba(255, 34, 85, 0.22) !important;
         }
         .strike-card-node.main-sup-active {
-            border: 1.3px solid var(--green-glow) !important;
-            background: rgba(0, 255, 136, 0.18) !important;
+            border: 1.8px solid var(--green-glow) !important;
+            background: rgba(0, 255, 136, 0.22) !important;
         }
 
-        .glow-plus { color: var(--green-glow); font-weight: 800; font-size: 10px; }
-        .glow-minus { color: var(--red-glow); font-weight: 800; font-size: 10px; }
+        .glow-plus { color: var(--green-glow); font-weight: 900; font-size: 12px; }
+        .glow-minus { color: var(--red-glow); font-weight: 900; font-size: 12px; }
 
         .spot-axis-divider {
             height: 24px;
@@ -832,17 +833,17 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 0 8px;
+            padding: 0 10px;
             font-weight: 900;
-            font-size: 11px;
-            box-shadow: 0 0 10px rgba(255,255,255,0.7);
+            font-size: 12px;
+            box-shadow: 0 0 12px rgba(255,255,255,0.8);
             margin: 2px 0;
             z-index: 5;
             flex-shrink: 0;
         }
 
         .news-radar-deck {
-            height: 44px;
+            height: 36px;
             background: #080e1a;
             border-top: 1.5px solid #1a2a44;
             display: flex;
@@ -855,8 +856,8 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             background: #ff2255;
             color: #fff;
             font-weight: 900;
-            font-size: 9.5px;
-            padding: 4px 6px;
+            font-size: 10px;
+            padding: 3px 8px;
             border-radius: 3px;
             flex-shrink: 0;
         }
@@ -875,14 +876,21 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             100% { transform: translateX(-100%); } 
         }
 
+        /* MOBILE ADJUSTMENTS: 100% VISIBLE SCREEN WITHOUT VERTICAL SCROLL */
         @media (max-width: 768px) {
-            .strike-nodes-col { width: 230px !important; max-width: 50% !important; padding: 2px 4px !important; }
-            .strike-card-node { font-size: 9px !important; padding: 3px 4px !important; }
-            .badge-atm, .badge-itm, .badge-otm { display: none; }
-            .header-title { font-size: 10.5px; }
+            .cyber-header { height: 32px; padding: 0 8px; }
+            .header-title { font-size: 11px; }
+            .btn-back-chart { font-size: 9.5px; padding: 2px 6px; }
+            .signal-strip { height: 34px; padding: 0 8px; }
             .verdict-tag { font-size: 11px; }
-            .node-badge { font-size: 8.5px; padding: 2px 4px; }
-            .spot-axis-divider { height: 20px !important; font-size: 9.5px !important; }
+            .node-badge { font-size: 9.5px; padding: 2px 6px; }
+            .stream-workspace { height: calc(100vh - 96px) !important; }
+            .strike-nodes-col { width: 280px !important; max-width: 52% !important; padding: 1px 4px !important; }
+            .strike-card-node { font-size: 11px !important; padding: 2px 5px !important; }
+            .badge-atm, .badge-itm, .badge-otm { display: inline-block; font-size: 8px !important; padding: 0 2px !important; }
+            .spot-axis-divider { height: 20px !important; font-size: 10.5px !important; margin: 1px 0 !important; }
+            .news-radar-deck { height: 30px; padding: 0 6px; }
+            .radar-badge-box { font-size: 8.5px; padding: 2px 4px; }
             .news-scroll-text { font-size: 11px; }
         }
     </style>
@@ -893,30 +901,30 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             <span style="display:inline-block; width:7px; height:7px; background:var(--cyan-glow); border-radius:50%; box-shadow:0 0 6px var(--cyan-glow);"></span>
             QUANTUM OI RADAR
         </div>
-        <div style="font-size:9.5px; color:var(--text-dim);" id="expTimeTag">EXP: -- | SYNC: --</div>
+        <div style="font-size:10.5px; color:var(--text-dim);" id="expTimeTag">EXP: -- | SYNC: --</div>
         <a href="/" class="btn-back-chart">⬅ CHARTS</a>
     </div>
 
     <div class="signal-strip">
         <div>
-            <div style="font-size:8.5px; color:var(--text-dim); text-transform:uppercase;">VERDICT:</div>
+            <div style="font-size:9px; color:var(--text-dim); text-transform:uppercase;">VERDICT:</div>
             <div class="verdict-tag" id="verdictText" style="color:var(--green-glow);">SCANNING...</div>
         </div>
 
         <div class="major-node-box">
             <div class="node-badge res-node" id="boxMajorRes">
                 <span>🛡️ RES:</span>
-                <span id="txtMajorRes" style="font-weight:900;">--</span>
+                <span id="txtMajorRes">--</span>
             </div>
             <div class="node-badge sup-node" id="boxMajorSup">
                 <span>🏰 SUP:</span>
-                <span id="txtMajorSup" style="font-weight:900;">--</span>
+                <span id="txtMajorSup">--</span>
             </div>
         </div>
 
         <div style="text-align:right;">
-            <div style="font-size:8.5px; color:var(--text-dim); text-transform:uppercase;">ACTION:</div>
-            <div style="font-size:10.5px; font-weight:800; color:var(--cyan-glow);" id="actionText">CALCULATING...</div>
+            <div style="font-size:9px; color:var(--text-dim); text-transform:uppercase;">ACTION:</div>
+            <div style="font-size:11px; font-weight:900; color:var(--cyan-glow);" id="actionText">CALCULATING...</div>
         </div>
     </div>
 
@@ -926,7 +934,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         </div>
 
         <div class="strike-nodes-col">
-            <div style="font-size:9.5px; font-weight:bold; color:var(--green-glow); text-transform:uppercase;">
+            <div style="font-size:10px; font-weight:bold; color:var(--green-glow); text-transform:uppercase; padding-left:2px;">
                 ▲ CALL RESISTANCE (CE)
             </div>
             <div id="callStrikesContainer" class="strike-group-container"></div>
@@ -936,7 +944,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 <span id="spotCenterVal">₹ 23,053.1</span>
             </div>
 
-            <div style="font-size:9.5px; font-weight:bold; color:var(--red-glow); text-transform:uppercase;">
+            <div style="font-size:10px; font-weight:bold; color:var(--red-glow); text-transform:uppercase; padding-left:2px;">
                 ▼ PUT SUPPORT (PE)
             </div>
             <div id="putStrikesContainer" class="strike-group-container"></div>
@@ -960,6 +968,8 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         let streamData = null;
         let callNodePositions = [];
         let putNodePositions = [];
+        let atmCallY = null;
+        let atmPutY = null;
 
         function resize() {
             canvas.width = container.clientWidth;
@@ -997,12 +1007,12 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 let cHtml = '';
                 streamData.calls.forEach((c, idx) => {
                     let isMain = (streamData.main_res && streamData.main_res.strike === c.strike) ? 'main-res-active' : (c.is_atm ? 'atm-node-active' : '');
-                    let badge = c.chg > 0 ? `<span class="glow-plus">${c.chg_str}</span>` : (c.chg < 0 ? `<span class="glow-minus">${c.chg_str}</span>` : `<span style="color:#94a3b8; font-weight:700;">${c.chg_str}</span>`);
+                    let badge = c.chg > 0 ? `<span class="glow-plus">${c.chg_str}</span>` : (c.chg < 0 ? `<span class="glow-minus">${c.chg_str}</span>` : `<span style="color:#94a3b8; font-weight:800;">${c.chg_str}</span>`);
                     let ltpText = c.ltp > 0 ? `(₹${c.ltp.toFixed(2)})` : '';
                     let typeBadge = `<span class="badge-${c.type_tag.toLowerCase()}">${c.type_tag}</span>`;
 
                     cHtml += `<div class="strike-card-node node-call ${isMain}" id="cNode_${idx}">
-                        <span><b>${c.strike} CE</b> ${typeBadge} <span style="color:#38bdf8; font-weight:800; margin-left:2px;">${ltpText}</span> <small style="color:#64748b; margin-left:2px;">(${c.oi_str})</small></span>
+                        <span><b>${c.strike} CE</b> ${typeBadge} <span style="color:#38bdf8; font-weight:900; margin-left:3px;">${ltpText}</span> <small style="color:#94a3b8; margin-left:2px;">(${c.oi_str})</small></span>
                         ${badge}
                     </div>`;
                 });
@@ -1012,12 +1022,12 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 let pHtml = '';
                 streamData.puts.forEach((p, idx) => {
                     let isMain = (streamData.main_sup && streamData.main_sup.strike === p.strike) ? 'main-sup-active' : (p.is_atm ? 'atm-node-active' : '');
-                    let badge = p.chg > 0 ? `<span class="glow-plus">${p.chg_str}</span>` : (p.chg < 0 ? `<span class="glow-minus">${p.chg_str}</span>` : `<span style="color:#94a3b8; font-weight:700;">${p.chg_str}</span>`);
+                    let badge = p.chg > 0 ? `<span class="glow-plus">${p.chg_str}</span>` : (p.chg < 0 ? `<span class="glow-minus">${p.chg_str}</span>` : `<span style="color:#94a3b8; font-weight:800;">${p.chg_str}</span>`);
                     let ltpText = p.ltp > 0 ? `(₹${p.ltp.toFixed(2)})` : '';
                     let typeBadge = `<span class="badge-${p.type_tag.toLowerCase()}">${p.type_tag}</span>`;
 
                     pHtml += `<div class="strike-card-node node-put ${isMain}" id="pNode_${idx}">
-                        <span><b>${p.strike} PE</b> ${typeBadge} <span style="color:#ff2255; font-weight:800; margin-left:2px;">${ltpText}</span> <small style="color:#64748b; margin-left:2px;">(${p.oi_str})</small></span>
+                        <span><b>${p.strike} PE</b> ${typeBadge} <span style="color:#ff2255; font-weight:900; margin-left:3px;">${ltpText}</span> <small style="color:#94a3b8; margin-left:2px;">(${p.oi_str})</small></span>
                         ${badge}
                     </div>`;
                 });
@@ -1031,24 +1041,30 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         function captureTargetCoordinates() {
             callNodePositions = [];
             putNodePositions = [];
+            atmCallY = null;
+            atmPutY = null;
             const containerRect = container.getBoundingClientRect();
 
             if (streamData && streamData.calls) {
-                streamData.calls.forEach((_, idx) => {
+                streamData.calls.forEach((c, idx) => {
                     let el = document.getElementById(`cNode_${idx}`);
                     if (el) {
                         let r = el.getBoundingClientRect();
-                        callNodePositions.push(r.top - containerRect.top + (r.height / 2));
+                        let targetCenter = r.top - containerRect.top + (r.height / 2);
+                        callNodePositions.push(targetCenter);
+                        if (c.is_atm) atmCallY = targetCenter;
                     }
                 });
             }
 
             if (streamData && streamData.puts) {
-                streamData.puts.forEach((_, idx) => {
+                streamData.puts.forEach((p, idx) => {
                     let el = document.getElementById(`pNode_${idx}`);
                     if (el) {
                         let r = el.getBoundingClientRect();
-                        putNodePositions.push(r.top - containerRect.top + (r.height / 2));
+                        let targetCenter = r.top - containerRect.top + (r.height / 2);
+                        putNodePositions.push(targetCenter);
+                        if (p.is_atm) atmPutY = targetCenter;
                     }
                 });
             }
@@ -1056,19 +1072,19 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 
         function drawLineLabel(x, y, text, badgeColor, textColor) {
             ctx.save();
-            ctx.font = 'bold 9px monospace, sans-serif';
+            ctx.font = 'bold 10px monospace, sans-serif';
             let textWidth = ctx.measureText(text).width;
-            let padX = 4;
+            let padX = 5;
             let bWidth = textWidth + (padX * 2);
-            let bHeight = 14;
+            let bHeight = 16;
             let bx = x - (bWidth / 2);
             let by = y - (bHeight / 2);
 
             ctx.fillStyle = '#080d16';
             ctx.strokeStyle = badgeColor;
-            ctx.lineWidth = 1.1;
+            ctx.lineWidth = 1.2;
             ctx.shadowColor = badgeColor;
-            ctx.shadowBlur = 4;
+            ctx.shadowBlur = 5;
             
             ctx.beginPath();
             ctx.roundRect(bx, by, bWidth, bHeight, 3);
@@ -1102,10 +1118,10 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 let lineColor = isMain ? '#00ff88' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : `rgba(0, 255, 136, ${0.25 + (i * 0.08)})`));
                 
                 ctx.beginPath();
-                ctx.lineWidth = isMain ? 2.6 : 1.3;
+                ctx.lineWidth = isMain ? 2.8 : (isAtm ? 2.2 : 1.3);
                 ctx.strokeStyle = lineColor;
 
-                let waveOffset = Math.sin(t + i * 0.7) * 8;
+                let waveOffset = Math.sin(t + i * 0.7) * 7;
                 let cp1x = canvas.width * 0.38;
                 let cp1y = startY - 14 - (i * 5) + waveOffset;
                 let cp2x = canvas.width * 0.72;
@@ -1121,13 +1137,13 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 
                 ctx.beginPath();
                 ctx.fillStyle = isMain ? '#ffffff' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : '#00ff88'));
-                ctx.arc(px, py, isMain ? 3.2 : 2.0, 0, Math.PI * 2);
+                ctx.arc(px, py, isMain ? 3.5 : (isAtm ? 2.8 : 2.0), 0, Math.PI * 2);
                 ctx.fill();
 
                 if (callItem && !isMobile) {
                     let lxProg = 0.76;
                     let lx = Math.pow(1 - lxProg, 3) * startX + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1x + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * endX;
-                    let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2y + Math.pow(lxProg, 3) * targetY;
+                    let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * targetY;
                     
                     let labelText = `${callItem.strike} CE: ${callItem.chg_str}`;
                     let labelBorderColor = isMain ? '#00ff88' : (isAtm ? '#00f0ff' : '#1a2a44');
@@ -1146,10 +1162,10 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 let lineColor = isMain ? '#ff2255' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : `rgba(255, 34, 85, ${0.25 + (i * 0.08)})`));
                 
                 ctx.beginPath();
-                ctx.lineWidth = isMain ? 2.6 : 1.3;
+                ctx.lineWidth = isMain ? 2.8 : (isAtm ? 2.2 : 1.3);
                 ctx.strokeStyle = lineColor;
 
-                let waveOffset = Math.sin(t + i * 0.7) * 8;
+                let waveOffset = Math.sin(t + i * 0.7) * 7;
                 let cp1x = canvas.width * 0.38;
                 let cp1y = startY + 14 + (i * 5) + waveOffset;
                 let cp2x = canvas.width * 0.72;
@@ -1165,13 +1181,13 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 
                 ctx.beginPath();
                 ctx.fillStyle = isMain ? '#ffffff' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : '#ff2255'));
-                ctx.arc(px, py, isMain ? 3.2 : 2.0, 0, Math.PI * 2);
+                ctx.arc(px, py, isMain ? 3.5 : (isAtm ? 2.8 : 2.0), 0, Math.PI * 2);
                 ctx.fill();
 
                 if (putItem && !isMobile) {
                     let lxProg = 0.76;
                     let lx = Math.pow(1 - lxProg, 3) * startX + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1x + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * endX;
-                    let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2y + Math.pow(lxProg, 3) * targetY;
+                    let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * targetY;
                     
                     let labelText = `${putItem.strike} PE: ${putItem.chg_str}`;
                     let labelBorderColor = isMain ? '#ff2255' : (isAtm ? '#00f0ff' : '#1a2a44');
@@ -1179,6 +1195,31 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                     drawLineLabel(lx, ly, labelText, labelBorderColor, labelTextColor);
                 }
             });
+
+            // 3. SPOT TO ATM CONNECTOR GUIDE LINES (DIRECT BRIGHT CYAN GUIDE)
+            if (atmCallY !== null) {
+                ctx.save();
+                ctx.setLineDash([4, 4]);
+                ctx.strokeStyle = 'rgba(0, 240, 255, 0.75)';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(canvas.width * 0.55, startY);
+                ctx.lineTo(endX, atmCallY);
+                ctx.stroke();
+                ctx.restore();
+            }
+
+            if (atmPutY !== null) {
+                ctx.save();
+                ctx.setLineDash([4, 4]);
+                ctx.strokeStyle = 'rgba(0, 240, 255, 0.75)';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(canvas.width * 0.55, startY);
+                ctx.lineTo(endX, atmPutY);
+                ctx.stroke();
+                ctx.restore();
+            }
 
             // Central White Spot Line
             ctx.beginPath();
