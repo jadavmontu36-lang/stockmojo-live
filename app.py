@@ -373,10 +373,9 @@ def get_quantum_oi_stream():
     
     ist_time_str = get_current_ist_time().strftime("%I:%M:%S %p")
 
-    # 1. CALL STRIKES (From Top OTM down to Spot Axis ATM in exact sequential order):
-    # Top 4 OTM (23250, 23200, 23150, 23100) -> 2 ITM (22950, 23000) -> Spot Axis Pase ATM (23050)
-    # i sequence: [4, 3, 2, 1, -2, -1, 0]
-    call_steps = [4, 3, 2, 1, -2, -1, 0]
+    # 1. CALL STRIKES (From Top OTM down to Spot Axis ATM):
+    # Top 4 OTM (23250, 23200, 23150, 23100) -> 2 ITM (23000, 22950) -> Spot Axis Pase ATM (23050)
+    call_steps = [4, 3, 2, 1, -1, -2, 0]
     for i in call_steps:
         stk = atm + (i * 50)
         tok = token_map.get(stk, {}).get("CE", "")
@@ -1096,7 +1095,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             }
         }
 
-        // FLOATING BADGE MOUNTED TO EXACT RESPETIVE CURVE
+        // FLOATING BADGE FOR LIVE + / - OI CHANGE MOUNTED TO EXACT SAME LINE
         function drawFloatingOIBadge(x, y, text, isPositive, isNegative, isMain, isAtm) {
             ctx.save();
             ctx.font = 'bold 9.5px monospace, sans-serif';
@@ -1107,7 +1106,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             let bx = x - (bw / 2);
             let by = y - (bh / 2);
 
-            let borderColor = isMain ? '#ff2255' : (isAtm ? '#00f0ff' : (isPositive ? '#00ff88' : (isNegative ? '#ff2255' : '#334155')));
+            let borderColor = isMain ? (isNegative ? '#ff2255' : '#00ff88') : (isAtm ? '#00f0ff' : (isPositive ? '#00ff88' : (isNegative ? '#ff2255' : '#334155')));
             let glowColor = borderColor;
             let textColor = isPositive ? '#00ff88' : (isNegative ? '#ff2255' : '#e2e8f0');
 
@@ -1138,18 +1137,17 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             const endX = canvas.width;
             const t = Date.now() * 0.0025;
 
-            // 1. CALL LINES (Pure Red for 23200 Resistance, Mounted Badges)
+            // 1. CALL LINES (Pot-potani line par j badge mount thashe)
             callNodePositions.forEach((targetY, i) => {
                 let callItem = (streamData && streamData.calls && streamData.calls[i]) ? streamData.calls[i] : null;
                 let isMain = (streamData && streamData.main_res && callItem && callItem.strike === streamData.main_res.strike);
                 let isAtm = (callItem && callItem.is_atm);
                 let isItm = (callItem && callItem.type_tag === "ITM");
                 
-                // 23200 RESISTANCE IS NOW PURE RED (#ff2255)
-                let lineColor = isMain ? '#ff2255' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : `rgba(0, 255, 136, ${0.30 + (i * 0.08)})`));
+                let lineColor = isMain ? '#00ff88' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : `rgba(0, 255, 136, ${0.30 + (i * 0.08)})`));
                 
                 ctx.beginPath();
-                ctx.lineWidth = isMain ? 3.0 : (isAtm ? 2.4 : 1.4);
+                ctx.lineWidth = isMain ? 2.8 : (isAtm ? 2.4 : 1.4);
                 ctx.strokeStyle = lineColor;
 
                 let waveOffset = Math.sin(t + i * 0.7) * 7;
@@ -1167,32 +1165,32 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 let py = Math.pow(1 - pProg, 3) * startY + 3 * Math.pow(1 - pProg, 2) * pProg * cp1y + 3 * (1 - pProg) * Math.pow(pProg, 2) * cp2y + Math.pow(pProg, 3) * targetY;
 
                 ctx.beginPath();
-                ctx.fillStyle = isMain ? '#ff2255' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : '#00ff88'));
-                ctx.arc(px, py, isMain ? 3.8 : (isAtm ? 3.0 : 2.0), 0, Math.PI * 2);
+                ctx.fillStyle = isMain ? '#ffffff' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : '#00ff88'));
+                ctx.arc(px, py, isMain ? 3.5 : (isAtm ? 3.0 : 2.0), 0, Math.PI * 2);
                 ctx.fill();
 
-                // EXACT ON-CURVE BADGE MOUNTED TO THIS SPECIFIC CALL LINE
+                // EXACT ON-CURVE BADGE FOR EACH SPECIFIC CALL LINE (NO CROSSING)
                 if (callItem) {
-                    let lxProg = 0.60;
+                    let lxProg = 0.62;
                     let lx = Math.pow(1 - lxProg, 3) * startX + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1x + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * endX;
-                    let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * targetY;
+                    let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2y + Math.pow(lxProg, 3) * targetY;
                     
                     let badgeText = `${callItem.strike} CE: ${callItem.chg_str}`;
                     drawFloatingOIBadge(lx, ly, badgeText, callItem.chg > 0, callItem.chg < 0, isMain, isAtm);
                 }
             });
 
-            // 2. PUT LINES (Pure Green for 23000 Support, Mounted Badges)
+            // 2. PUT LINES (Pot-potani line par j badge mount thashe)
             putNodePositions.forEach((targetY, i) => {
                 let putItem = (streamData && streamData.puts && streamData.puts[i]) ? streamData.puts[i] : null;
                 let isMain = (streamData && streamData.main_sup && putItem && putItem.strike === streamData.main_sup.strike);
                 let isAtm = (putItem && putItem.is_atm);
                 let isItm = (putItem && putItem.type_tag === "ITM");
                 
-                let lineColor = isMain ? '#00ff88' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : `rgba(255, 34, 85, ${0.30 + (i * 0.08)})`));
+                let lineColor = isMain ? '#ff2255' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : `rgba(255, 34, 85, ${0.30 + (i * 0.08)})`));
                 
                 ctx.beginPath();
-                ctx.lineWidth = isMain ? 3.0 : (isAtm ? 2.4 : 1.4);
+                ctx.lineWidth = isMain ? 2.8 : (isAtm ? 2.4 : 1.4);
                 ctx.strokeStyle = lineColor;
 
                 let waveOffset = Math.sin(t + i * 0.7) * 7;
@@ -1210,15 +1208,15 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 let py = Math.pow(1 - pProg, 3) * startY + 3 * Math.pow(1 - pProg, 2) * pProg * cp1y + 3 * (1 - pProg) * Math.pow(pProg, 2) * cp2y + Math.pow(pProg, 3) * targetY;
 
                 ctx.beginPath();
-                ctx.fillStyle = isMain ? '#00ff88' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : '#ff2255'));
-                ctx.arc(px, py, isMain ? 3.8 : (isAtm ? 3.0 : 2.0), 0, Math.PI * 2);
+                ctx.fillStyle = isMain ? '#ffffff' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : '#ff2255'));
+                ctx.arc(px, py, isMain ? 3.5 : (isAtm ? 3.0 : 2.0), 0, Math.PI * 2);
                 ctx.fill();
 
-                // EXACT ON-CURVE BADGE MOUNTED TO THIS SPECIFIC PUT LINE
+                // EXACT ON-CURVE BADGE FOR EACH SPECIFIC PUT LINE (NO CROSSING)
                 if (putItem) {
-                    let lxProg = 0.60;
+                    let lxProg = 0.62;
                     let lx = Math.pow(1 - lxProg, 3) * startX + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1x + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * endX;
-                    let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * targetY;
+                    let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2y + Math.pow(lxProg, 3) * targetY;
                     
                     let badgeText = `${putItem.strike} PE: ${putItem.chg_str}`;
                     drawFloatingOIBadge(lx, ly, badgeText, putItem.chg > 0, putItem.chg < 0, isMain, isAtm);
