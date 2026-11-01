@@ -373,7 +373,7 @@ def get_quantum_oi_stream():
     
     ist_time_str = get_current_ist_time().strftime("%I:%M:%S %p")
 
-    # 1. CALL STRIKES (From Top to Spot Axis):
+    # 1. CALL STRIKES (From Top OTM down to Spot Axis ATM):
     # Top 4 OTM (23250, 23200, 23150, 23100) -> 2 ITM (23000, 22950) -> Spot Axis Pase ATM (23050)
     call_steps = [4, 3, 2, 1, -1, -2, 0]
     for i in call_steps:
@@ -403,7 +403,7 @@ def get_quantum_oi_stream():
             "is_atm": (stk == atm)
         })
 
-    # 2. PUT STRIKES (From Spot Axis down to Deep OTM):
+    # 2. PUT STRIKES (From Spot Axis ATM down to Deep OTM):
     # Spot Axis Pase ATM (23050) -> 2 ITM (23100, 23150) -> Bottom 4 OTM (23000, 22950, 22900, 22850)
     put_steps = [0, 1, 2, -1, -2, -3, -4]
     for i in put_steps:
@@ -725,7 +725,15 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             --text-dim: #94a3b8;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Noto Sans Gujarati', -apple-system, BlinkMacSystemFont, monospace, sans-serif; }
-        body { background: var(--bg-deep); color: #fff; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+        body { 
+            background: var(--bg-deep); 
+            color: #fff; 
+            min-height: 100vh; 
+            display: flex; 
+            flex-direction: column; 
+            overflow-x: hidden; 
+            overflow-y: auto !important; 
+        }
 
         .cyber-header {
             height: 38px;
@@ -761,9 +769,8 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             flex: 1;
             display: flex;
             width: 100%;
-            height: calc(100vh - 114px);
+            min-height: calc(100vh - 114px);
             position: relative;
-            overflow: hidden;
         }
 
         .matrix-canvas-box { 
@@ -782,10 +789,11 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             display: flex;
             flex-direction: column;
             justify-content: space-between;
-            padding: 2px 8px;
+            padding: 4px 8px;
             position: relative;
-            height: 100%;
+            min-height: 100%;
             flex-shrink: 0;
+            overflow-y: visible;
         }
 
         .strike-group-container {
@@ -801,7 +809,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             background: #0d1522;
             border: 1.2px solid #1f2f45;
             border-radius: 5px;
-            padding: 3px 10px;
+            padding: 4px 10px;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -846,7 +854,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             font-weight: 900;
             font-size: 12.5px;
             box-shadow: 0 0 14px rgba(255,255,255,0.9);
-            margin: 2px 0;
+            margin: 3px 0;
             z-index: 5;
             flex-shrink: 0;
         }
@@ -860,6 +868,9 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             padding: 0 10px;
             gap: 8px;
             flex-shrink: 0;
+            position: sticky;
+            bottom: 0;
+            z-index: 50;
         }
         .radar-badge-box {
             background: #ff2255;
@@ -885,19 +896,33 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             100% { transform: translateX(-100%); } 
         }
 
+        /* MOBILE RESPONSIVE SMOOTH SCROLL */
         @media (max-width: 768px) {
+            body { overflow-y: auto !important; height: auto !important; }
             .cyber-header { height: 32px; padding: 0 8px; }
             .header-title { font-size: 11.5px; }
             .btn-back-chart { font-size: 9.5px; padding: 2px 6px; }
             .signal-strip { height: 34px; padding: 0 8px; }
             .verdict-tag { font-size: 11.5px; }
             .node-badge { font-size: 10px; padding: 2px 6px; }
-            .stream-workspace { height: calc(100vh - 96px) !important; }
-            .strike-nodes-col { width: 290px !important; max-width: 53% !important; padding: 1px 4px !important; }
-            .strike-card-node { font-size: 11.5px !important; padding: 2px 5px !important; }
+            
+            .stream-workspace { 
+                min-height: 600px !important; 
+                height: auto !important; 
+            }
+            .matrix-canvas-box {
+                min-height: 600px !important;
+            }
+            .strike-nodes-col { 
+                width: 290px !important; 
+                max-width: 53% !important; 
+                padding: 2px 4px !important; 
+                min-height: 600px !important;
+            }
+            .strike-card-node { font-size: 11.5px !important; padding: 3px 6px !important; }
             .badge-atm, .badge-itm, .badge-otm { display: inline-block; font-size: 8.5px !important; padding: 0 2px !important; }
-            .spot-axis-divider { height: 20px !important; font-size: 11px !important; margin: 1px 0 !important; }
-            .news-radar-deck { height: 30px; padding: 0 6px; }
+            .spot-axis-divider { height: 22px !important; font-size: 11px !important; margin: 2px 0 !important; }
+            .news-radar-deck { height: 32px; padding: 0 6px; }
             .radar-badge-box { font-size: 8.5px; padding: 2px 4px; }
             .news-scroll-text { font-size: 11px; }
         }
@@ -1070,7 +1095,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             }
         }
 
-        // FLOATING BADGE FOR LIVE + / - OI CHANGE ON TRASHI LINES
+        // FLOATING BADGE FOR LIVE + / - OI CHANGE MOUNTED TO EXACT SAME LINE
         function drawFloatingOIBadge(x, y, text, isPositive, isNegative, isMain, isAtm) {
             ctx.save();
             ctx.font = 'bold 9.5px monospace, sans-serif';
@@ -1081,11 +1106,11 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             let bx = x - (bw / 2);
             let by = y - (bh / 2);
 
-            let borderColor = isMain ? (isNegative ? '#ff2255' : '#00ff88') : (isAtm ? '#00f0ff' : (isPositive ? '#00ff88' : (isNegative ? '#ff2255' : '#475569')));
+            let borderColor = isMain ? (isNegative ? '#ff2255' : '#00ff88') : (isAtm ? '#00f0ff' : (isPositive ? '#00ff88' : (isNegative ? '#ff2255' : '#334155')));
             let glowColor = borderColor;
-            let textColor = isPositive ? '#00ff88' : (isNegative ? '#ff2255' : '#cbd5e1');
+            let textColor = isPositive ? '#00ff88' : (isNegative ? '#ff2255' : '#e2e8f0');
 
-            ctx.fillStyle = 'rgba(8, 13, 22, 0.92)';
+            ctx.fillStyle = 'rgba(8, 13, 22, 0.95)';
             ctx.strokeStyle = borderColor;
             ctx.lineWidth = isMain || isAtm ? 1.5 : 1.1;
             ctx.shadowColor = glowColor;
@@ -1112,7 +1137,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             const endX = canvas.width;
             const t = Date.now() * 0.0025;
 
-            // 1. CALL LINES (Symmetrical Natural Arc with Floating OI Badges)
+            // 1. CALL LINES (Pot-potani line par j badge mount thashe)
             callNodePositions.forEach((targetY, i) => {
                 let callItem = (streamData && streamData.calls && streamData.calls[i]) ? streamData.calls[i] : null;
                 let isMain = (streamData && streamData.main_res && callItem && callItem.strike === streamData.main_res.strike);
@@ -1144,18 +1169,18 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 ctx.arc(px, py, isMain ? 3.5 : (isAtm ? 3.0 : 2.0), 0, Math.PI * 2);
                 ctx.fill();
 
-                // TRASHI LINE PAR LIVE + / - OI CHANGE BADGE
+                // EXACT ON-CURVE BADGE FOR EACH SPECIFIC CALL LINE (NO CROSSING)
                 if (callItem) {
-                    let lxProg = 0.55 + ((i % 3) * 0.12);
+                    let lxProg = 0.62;
                     let lx = Math.pow(1 - lxProg, 3) * startX + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1x + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * endX;
-                    let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * targetY;
+                    let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2y + Math.pow(lxProg, 3) * targetY;
                     
                     let badgeText = `${callItem.strike} CE: ${callItem.chg_str}`;
                     drawFloatingOIBadge(lx, ly, badgeText, callItem.chg > 0, callItem.chg < 0, isMain, isAtm);
                 }
             });
 
-            // 2. PUT LINES (Symmetrical Natural Arc with Floating OI Badges)
+            // 2. PUT LINES (Pot-potani line par j badge mount thashe)
             putNodePositions.forEach((targetY, i) => {
                 let putItem = (streamData && streamData.puts && streamData.puts[i]) ? streamData.puts[i] : null;
                 let isMain = (streamData && streamData.main_sup && putItem && putItem.strike === streamData.main_sup.strike);
@@ -1187,11 +1212,11 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 ctx.arc(px, py, isMain ? 3.5 : (isAtm ? 3.0 : 2.0), 0, Math.PI * 2);
                 ctx.fill();
 
-                // TRASHI LINE PAR LIVE + / - OI CHANGE BADGE
+                // EXACT ON-CURVE BADGE FOR EACH SPECIFIC PUT LINE (NO CROSSING)
                 if (putItem) {
-                    let lxProg = 0.55 + ((i % 3) * 0.12);
+                    let lxProg = 0.62;
                     let lx = Math.pow(1 - lxProg, 3) * startX + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1x + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * endX;
-                    let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * targetY;
+                    let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2y + Math.pow(lxProg, 3) * targetY;
                     
                     let badgeText = `${putItem.strike} PE: ${putItem.chg_str}`;
                     drawFloatingOIBadge(lx, ly, badgeText, putItem.chg > 0, putItem.chg < 0, isMain, isAtm);
