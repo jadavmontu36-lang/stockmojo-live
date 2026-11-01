@@ -373,8 +373,8 @@ def get_quantum_oi_stream():
     
     ist_time_str = get_current_ist_time().strftime("%I:%M:%S %p")
 
-    # CALL STRUKES ORDER: Top (Highest OTM) down to Spot Axis (ATM)
-    # [23250, 23200, 23150, 23100, 23000(ITM), 22950(ITM), 23050(ATM)]
+    # 1. CALL STRIKES (From Top to Spot Axis):
+    # Top 4 OTM (23250, 23200, 23150, 23100) -> 2 ITM (23000, 22950) -> Spot Axis Pase ATM (23050)
     call_steps = [4, 3, 2, 1, -1, -2, 0]
     for i in call_steps:
         stk = atm + (i * 50)
@@ -403,25 +403,16 @@ def get_quantum_oi_stream():
             "is_atm": (stk == atm)
         })
 
-    # PUT STRIKES ORDER: From Spot Axis (ATM) down to Deep OTM
-    # [23050(ATM), 23100(ITM), 23150(ITM), 23000(OTM), 22950(OTM), 22900(OTM), 22850(OTM)]
+    # 2. PUT STRIKES (From Spot Axis down to Deep OTM):
+    # Spot Axis Pase ATM (23050) -> 2 ITM (23100, 23150) -> Bottom 4 OTM (23000, 22950, 22900, 22850)
     put_steps = [0, 1, 2, -1, -2, -3, -4]
     for i in put_steps:
-        stk = atm - (i * 50) if i <= 0 else atm + (i * 50)
-        # Accurate strikes for Put:
-        # i=0: 23050 (ATM)
-        # i=1: 23100 (ITM)
-        # i=2: 23150 (ITM)
-        # i=-1: 23000 (OTM)
-        # i=-2: 22950 (OTM)
-        # i=-3: 22900 (OTM)
-        # i=-4: 22850 (OTM)
         if i == 0:
             stk = atm
         elif i > 0:
-            stk = atm + (i * 50) # ITM puts
+            stk = atm + (i * 50)
         else:
-            stk = atm + (i * 50) # OTM puts (i is negative)
+            stk = atm + (i * 50)
 
         tok = token_map.get(stk, {}).get("PE", "")
         q = live_quotes.get(tok, {})
@@ -1079,6 +1070,40 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             }
         }
 
+        // FLOATING BADGE FOR LIVE + / - OI CHANGE ON TRASHI LINES
+        function drawFloatingOIBadge(x, y, text, isPositive, isNegative, isMain, isAtm) {
+            ctx.save();
+            ctx.font = 'bold 9.5px monospace, sans-serif';
+            let tw = ctx.measureText(text).width;
+            let padX = 5;
+            let bw = tw + (padX * 2);
+            let bh = 15;
+            let bx = x - (bw / 2);
+            let by = y - (bh / 2);
+
+            let borderColor = isMain ? (isNegative ? '#ff2255' : '#00ff88') : (isAtm ? '#00f0ff' : (isPositive ? '#00ff88' : (isNegative ? '#ff2255' : '#475569')));
+            let glowColor = borderColor;
+            let textColor = isPositive ? '#00ff88' : (isNegative ? '#ff2255' : '#cbd5e1');
+
+            ctx.fillStyle = 'rgba(8, 13, 22, 0.92)';
+            ctx.strokeStyle = borderColor;
+            ctx.lineWidth = isMain || isAtm ? 1.5 : 1.1;
+            ctx.shadowColor = glowColor;
+            ctx.shadowBlur = isMain ? 8 : (isAtm ? 6 : 3);
+            
+            ctx.beginPath();
+            ctx.roundRect(bx, by, bw, bh, 3);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = textColor;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, x, y);
+            ctx.restore();
+        }
+
         function renderNerveMatrix() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -1087,7 +1112,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             const endX = canvas.width;
             const t = Date.now() * 0.0025;
 
-            // 1. CALL LINES (NO DASHED LINES, NO RANDOM LABELS)
+            // 1. CALL LINES (Symmetrical Natural Arc with Floating OI Badges)
             callNodePositions.forEach((targetY, i) => {
                 let callItem = (streamData && streamData.calls && streamData.calls[i]) ? streamData.calls[i] : null;
                 let isMain = (streamData && streamData.main_res && callItem && callItem.strike === streamData.main_res.strike);
@@ -1118,9 +1143,19 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 ctx.fillStyle = isMain ? '#ffffff' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : '#00ff88'));
                 ctx.arc(px, py, isMain ? 3.5 : (isAtm ? 3.0 : 2.0), 0, Math.PI * 2);
                 ctx.fill();
+
+                // TRASHI LINE PAR LIVE + / - OI CHANGE BADGE
+                if (callItem) {
+                    let lxProg = 0.55 + ((i % 3) * 0.12);
+                    let lx = Math.pow(1 - lxProg, 3) * startX + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1x + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * endX;
+                    let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * targetY;
+                    
+                    let badgeText = `${callItem.strike} CE: ${callItem.chg_str}`;
+                    drawFloatingOIBadge(lx, ly, badgeText, callItem.chg > 0, callItem.chg < 0, isMain, isAtm);
+                }
             });
 
-            // 2. PUT LINES (NO DASHED LINES, CLEAN FLUID SPREAD)
+            // 2. PUT LINES (Symmetrical Natural Arc with Floating OI Badges)
             putNodePositions.forEach((targetY, i) => {
                 let putItem = (streamData && streamData.puts && streamData.puts[i]) ? streamData.puts[i] : null;
                 let isMain = (streamData && streamData.main_sup && putItem && putItem.strike === streamData.main_sup.strike);
@@ -1151,6 +1186,16 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 ctx.fillStyle = isMain ? '#ffffff' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : '#ff2255'));
                 ctx.arc(px, py, isMain ? 3.5 : (isAtm ? 3.0 : 2.0), 0, Math.PI * 2);
                 ctx.fill();
+
+                // TRASHI LINE PAR LIVE + / - OI CHANGE BADGE
+                if (putItem) {
+                    let lxProg = 0.55 + ((i % 3) * 0.12);
+                    let lx = Math.pow(1 - lxProg, 3) * startX + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1x + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * endX;
+                    let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * targetY;
+                    
+                    let badgeText = `${putItem.strike} PE: ${putItem.chg_str}`;
+                    drawFloatingOIBadge(lx, ly, badgeText, putItem.chg > 0, putItem.chg < 0, isMain, isAtm);
+                }
             });
 
             // Central White Spot Line
