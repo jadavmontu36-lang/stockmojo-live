@@ -345,7 +345,7 @@ def get_market_data(
         "pcr": pcr
     }
 
-# ==================== ADVANCED INTRADAY RADAR ENGINE (WITH TRAP FILTER) ====================
+# ==================== ADVANCED CONFIDENCE & TRAP RADAR ENGINE ====================
 @app.get("/api/oi/quantum-stream")
 def get_quantum_oi_stream():
     global BASELINE_OI_MAP
@@ -373,7 +373,9 @@ def get_quantum_oi_stream():
     
     ist_time_str = get_current_ist_time().strftime("%I:%M:%S %p")
 
-    # 1. CALL STRIKES (From Highest Strike down to ATM):
+    total_call_chg = 0
+    total_put_chg = 0
+
     call_steps = [6, 5, 4, 3, 2, 1, 0]
     for i in call_steps:
         stk = atm + (i * 50)
@@ -388,6 +390,8 @@ def get_quantum_oi_stream():
 
         base_oi = BASELINE_OI_MAP[base_key]
         chg = real_oi - base_oi
+        total_call_chg += max(0, chg)
+
         tag = "ATM" if stk == atm else "OTM"
 
         calls_data.append({
@@ -401,7 +405,6 @@ def get_quantum_oi_stream():
             "is_atm": (stk == atm)
         })
 
-    # 2. PUT STRIKES (From ATM down to Lowest Strike):
     put_steps = [0, -1, -2, -3, -4, -5, -6]
     for i in put_steps:
         stk = atm + (i * 50)
@@ -416,6 +419,8 @@ def get_quantum_oi_stream():
 
         base_oi = BASELINE_OI_MAP[base_key]
         chg = real_oi - base_oi
+        total_put_chg += max(0, chg)
+
         tag = "ATM" if stk == atm else "OTM"
 
         puts_data.append({
@@ -429,39 +434,46 @@ def get_quantum_oi_stream():
             "is_atm": (stk == atm)
         })
 
-    # DYNAMIC LOGIC: Spot Comparison against Max OI Wall
     main_res = max(calls_data, key=lambda x: x["oi"]) if calls_data else calls_data[3]
     main_sup = max(puts_data, key=lambda x: x["oi"]) if puts_data else puts_data[0]
 
     max_call_add = max(calls_data, key=lambda x: x["chg"]) if calls_data else None
     max_put_add = max(puts_data, key=lambda x: x["chg"]) if puts_data else None
 
-    # DETECTION OF TRAP (Support todi ne uper javaani sthiti)
-    is_support_hunting = False
-    if main_sup and spot < (main_sup["strike"] - 5) and spot >= (main_sup["strike"] - 75):
-        if max_put_add and max_put_add["strike"] <= main_sup["strike"] and max_put_add["chg"] > 0:
-            is_support_hunting = True
+    sum_chg = total_call_chg + total_put_chg
+    bull_power = round((total_put_chg / sum_chg) * 100) if sum_chg > 0 else 50
 
-    if is_support_hunting:
-        verdict = f"🎯 TRAP DETECTED: {main_sup['strike']} PE તૂટ્યા પછી Reversal"
+    is_hunting = (main_sup and spot < (main_sup["strike"] - 5) and spot >= (main_sup["strike"] - 75) and max_put_add and max_put_add["chg"] > 0)
+    is_strong_up = (bull_power >= 62 and max_put_add and max_put_add["chg"] > (max_call_add["chg"] if max_call_add else 0))
+
+    alert_type = "NORMAL"
+    if is_hunting:
+        verdict = f"🎯 OPERATOR TRAP: {main_sup['strike']} SL Hunt -> Reversal"
         color = "#00ff88"
         action = f"ખરીદો {atm} CE (Discount Entry) | લક્ષ્ય: {main_res['strike']}"
-        news = f"⚡ સાવધાન! નિફ્ટી સ્પોટ ({spot}) એ {main_sup['strike']} સપોર્ટ નીચે Stop-Loss Hunt કર્યો છે! પુટ રાઇટર્સ હજુ પણ {main_sup['strike']} પર (+{max_put_add['chg_str']}) ઉમેરી રહ્યા છે! રીટેલર્સને ટ્રેપ કરીને માર્કેટ અચાનક Rocket Reversal મારશે! કૉલ બાયની ઉત્તમ તક!"
-    elif max_put_add and max_put_add["chg"] > 0 and (not max_call_add or max_put_add["chg"] >= max_call_add["chg"]):
-        verdict = f"🚀 તેજી સંકેત: {max_put_add['strike']} PE પર નવો OI ઉમેરાયો"
+        next_step = f"હમણાં માર્કેટ {main_sup['strike']} નીચે પેનિક કરી રહ્યું છે, પણ પુટ રાઇટર્સ મજબૂત છે. ગભરાઈને કૉલ વેચતા નહીં! અટકીને ઉપર રોકેટ Reversal મારશે!"
+        news = f"⚡ CONFIDENCE ALERT: નિફ્ટી સ્પોટ ({spot}) એ {main_sup['strike']} નીચે રિટેલર્સના Stop-Loss હંટ કર્યા છે! મોટા પુટ રાઇટર્સ (+{max_put_add['chg_str']}) પોઝિશન પકડીને બેઠા છે! આ ફોલ્સ ડાઉન છે, થોડીવારમાં બજાર 23,{main_res['strike']%1000} તરફ રોકેટ ઉડાણ ભરશે! કૉલ હોલ્ડ રાખો!"
+        alert_type = "REVERSAL_BUY"
+    elif is_strong_up:
+        verdict = f"🚀 STRONG UP-TREND: {bull_power}% Buyers In Control"
         color = "#00ff88"
-        action = f"ખરીદો {max_put_add['strike']} CE / {atm} CE | લક્ષ્ય: {main_res['strike']}"
-        news = f"🔥 એડવાન્સ એલર્ટ: {max_put_add['strike']} PE સ્ટ્રાઇક પર સૌથી મોટો નવો ઓપન ઇન્ટરેસ્ટ ({max_put_add['chg_str']}) ઉમેરાયો છે! પુટ રાઇટર્સ મજબૂત દીવાલ બનાવી રહ્યા છે, જેથી બજાર નીચે અટકીને ઉપરની દિશામાં Reversal મારશે!"
-    elif max_call_add and max_call_add["chg"] > 0 and (not max_put_add or max_call_add["chg"] > max_put_add["chg"]):
-        verdict = f"🩸 મંદી સંકેત: {max_call_add['strike']} CE પર નવો OI ઉમેરાયો"
+        action = f"હોલ્ડ કરો {atm} CE / {max_put_add['strike']} CE | લક્ષ્ય: {main_res['strike']}"
+        next_step = f"લાઇવ અપ-મૂવ ચાલુ છે. માર્કેટ નીચે નહીં જાય, ધીરજ રાખો અને કૉલ હોલ્ડ કરો! પુલબેક પર નવો કૉલ ઉમેરો."
+        news = f"🔥 FULL CONFIDENCE ALERT: બજારમાં મજબૂત અપ-મૂવ ચાલુ છે! પુટ રાઇટર્સ ({max_put_add['strike']} PE પર {max_put_add['chg_str']}) આક્રમક છે. નિફ્ટી કોઈપણ નાની ડીપ મારે તો પણ ગભરાવાની જરૂર નથી, બજાર નીચે નહીં પટકે, ટાર્ગેટ {main_res['strike']} તરફ જ જશે! કૉલમાં વિશ્વાસ રાખો!"
+        alert_type = "BULLISH_TREND"
+    elif max_call_add and max_call_add["chg"] > (max_put_add["chg"] if max_put_add else 0):
+        verdict = f"🩸 BEARISH PRESSURE: {100-bull_power}% Sellers Dominating"
         color = "#ff2255"
-        action = f"ખરીદો {max_call_add['strike']} PE / {atm} PE | લક્ષ્ય: {main_sup['strike']}"
-        news = f"⚠️ એડવાન્સ એલર્ટ: {max_call_add['strike']} CE સ્ટ્રાઇક પર ભારે નવો ઓપન ઇન્ટરેસ્ટ ({max_call_add['chg_str']}) ઉમેરાયો છે! મોટા કૉલ સેલર્સ બજારને દબાવી રહ્યા છે, જેથી નિફ્ટી ઉપર નહીં જઈ શકે!"
+        action = f"ખરીદો {atm} PE | લક્ષ્ય: {main_sup['strike']}"
+        next_step = f"કૉલ રાઇટર્સ ઉપરથી દબાવી રહ્યા છે. ઉછાળે પુટ બાય સાઇડ નજર રાખો."
+        news = f"⚠️ ડાઉન એલર્ટ: {max_call_add['strike']} CE પર ભારે ઓપન ઇન્ટરેસ્ટ ({max_call_add['chg_str']}) ઉમેરાયો છે! મોટા કૉલ સેલર્સ માર્કેટને ઉપર જવા દેશે નહીં! પુટ સાઇડ ફોકસ રાખો!"
+        alert_type = "BEARISH_ALERT"
     else:
-        verdict = f"⚡ સાઇડવેઝ રેન્જ: {main_sup['strike']} - {main_res['strike']}"
+        verdict = f"⚡ RANGEBOUND CONSOLIDATION ({main_sup['strike']} - {main_res['strike']})"
         color = "#fbbf24"
-        action = f"બ્રેકઆઉટની રાહ જુઓ ({main_res['strike']} ઉપર કે {main_sup['strike']} નીચે)"
-        news = f"📢 લાઈવ સમાચાર: નિફ્ટી સ્પોટ {spot} પર ચાલે છે. નજીકનો સૌથી મોટો કૉલ અવરોધ {main_res['strike']} CE ({main_res['oi_str']}) અને પુટ સપોર્ટ {main_sup['strike']} PE ({main_sup['oi_str']}) છે."
+        action = f"બ્રેકઆઉટની રાહ જુઓ"
+        next_step = f"માર્કેટ {main_sup['strike']} અને {main_res['strike']} ની વચ્ચે અટવાયેલું છે."
+        news = f"📢 લાઈવ સમાચાર: નિફ્ટી સ્પોટ {spot} પર ચાલે છે. નજીકનો સપોર્ટ {main_sup['strike']} PE અને રેઝિસ્ટન્સ {main_res['strike']} CE છે."
 
     return {
         "spot": spot,
@@ -475,7 +487,10 @@ def get_quantum_oi_stream():
         "verdict": verdict,
         "color": color,
         "action": action,
-        "news": news
+        "bull_power": bull_power,
+        "next_step": next_step,
+        "news": news,
+        "alert_type": alert_type
     }
 
 # ==================== TERMINAL FRONTEND ====================
@@ -703,7 +718,7 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
 </html>
 """
 
-# ==================== QUANTUM REVERSAL MATRIX (CLEAN ON-LINE STAGGERED BADGES) ====================
+# ==================== QUANTUM REVERSAL MATRIX (WITH AUDIO BEEP ENGINE) ====================
 OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="gu">
 <head>
@@ -745,10 +760,24 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             flex-shrink: 0;
         }
         .header-title { font-size: 14.5px; font-weight: 900; color: var(--cyan-glow); display: flex; align-items: center; gap: 8px; }
+        .btn-audio-toggle {
+            background: #14241e;
+            border: 1.3px solid var(--green-glow);
+            color: var(--green-glow);
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 10.5px;
+            font-weight: 900;
+            cursor: pointer;
+            outline: none;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
         .btn-back-chart { background: #101c2e; border: 1.3px solid var(--cyan-glow); color: var(--cyan-glow); padding: 3px 10px; border-radius: 4px; font-size: 11px; text-decoration: none; font-weight: 800; }
 
         .signal-strip {
-            height: 40px;
+            height: 48px;
             background: #080d17;
             border-bottom: 1px solid #142033;
             display: flex;
@@ -757,18 +786,30 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             padding: 0 14px;
             flex-shrink: 0;
         }
-        .verdict-tag { font-size: 14px; font-weight: 900; }
+        .verdict-tag { font-size: 13.5px; font-weight: 900; }
 
         .major-node-box { display: flex; gap: 10px; align-items: center; }
         .node-badge { padding: 3px 10px; border-radius: 4px; font-size: 11.5px; font-weight: 900; display: flex; align-items: center; gap: 5px; }
         .res-node { background: rgba(255, 34, 85, 0.2); border: 1.5px solid var(--red-glow); color: var(--red-glow); }
         .sup-node { background: rgba(0, 255, 136, 0.2); border: 1.5px solid var(--green-glow); color: var(--green-glow); }
 
+        .power-meter-container {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: #0d1522;
+            padding: 4px 8px;
+            border-radius: 4px;
+            border: 1px solid #1e293b;
+        }
+        .power-bar-track { width: 70px; height: 7px; background: #ff2255; border-radius: 4px; overflow: hidden; }
+        .power-bar-fill { height: 100%; background: #00ff88; transition: width 0.5s ease; }
+
         .stream-workspace {
             flex: 1;
             display: flex;
             width: 100%;
-            min-height: calc(100vh - 114px);
+            min-height: calc(100vh - 128px);
             position: relative;
         }
 
@@ -857,37 +898,27 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             flex-shrink: 0;
         }
 
-        .news-radar-deck {
-            height: 36px;
-            background: #080e1a;
+        .confidence-deck {
+            background: #070d18;
             border-top: 1.5px solid #1a2a44;
+            padding: 4px 12px;
             display: flex;
-            align-items: center;
-            padding: 0 10px;
-            gap: 8px;
+            flex-direction: column;
+            gap: 2px;
             flex-shrink: 0;
             position: sticky;
             bottom: 0;
             z-index: 50;
         }
-        .radar-badge-box {
-            background: #ff2255;
-            color: #fff;
-            font-weight: 900;
-            font-size: 10px;
-            padding: 3px 8px;
-            border-radius: 3px;
-            flex-shrink: 0;
-        }
-        .news-ticker-container { flex: 1; overflow: hidden; position: relative; }
-        
+
+        .news-ticker-container { flex: 1; overflow: hidden; position: relative; white-space: nowrap; }
         .news-scroll-text {
             display: inline-block;
             white-space: nowrap;
             color: #f8fafc;
-            font-size: 13px;
+            font-size: 12.5px;
             font-weight: 700;
-            animation: slowMarquee 45s linear infinite;
+            animation: slowMarquee 40s linear infinite;
         }
         @keyframes slowMarquee { 
             0% { transform: translateX(100%); } 
@@ -897,30 +928,16 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         @media (max-width: 768px) {
             body { overflow-y: auto !important; height: auto !important; }
             .cyber-header { height: 32px; padding: 0 8px; }
-            .header-title { font-size: 11.5px; }
-            .btn-back-chart { font-size: 9.5px; padding: 2px 6px; }
-            .signal-strip { height: 34px; padding: 0 8px; }
-            .verdict-tag { font-size: 11.5px; }
-            .node-badge { font-size: 10px; padding: 2px 6px; }
-            
-            .stream-workspace { 
-                min-height: 600px !important; 
-                height: auto !important; 
-            }
-            .matrix-canvas-box {
-                min-height: 600px !important;
-            }
-            .strike-nodes-col { 
-                width: 290px !important; 
-                max-width: 53% !important; 
-                padding: 2px 4px !important; 
-                min-height: 600px !important;
-            }
+            .header-title { font-size: 11px; }
+            .signal-strip { height: 42px; padding: 0 8px; }
+            .verdict-tag { font-size: 11px; }
+            .node-badge { font-size: 9.5px; padding: 2px 5px; }
+            .power-meter-container { display: none; }
+            .stream-workspace { min-height: 600px !important; }
+            .matrix-canvas-box { min-height: 600px !important; }
+            .strike-nodes-col { width: 290px !important; max-width: 53% !important; min-height: 600px !important; }
             .strike-card-node { font-size: 11.5px !important; padding: 3px 6px !important; }
-            .badge-atm, .badge-otm { display: inline-block; font-size: 8.5px !important; padding: 0 2px !important; }
-            .spot-axis-divider { height: 22px !important; font-size: 11px !important; margin: 2px 0 !important; }
-            .news-radar-deck { height: 32px; padding: 0 6px; }
-            .radar-badge-box { font-size: 8.5px; padding: 2px 4px; }
+            .spot-axis-divider { height: 22px !important; font-size: 11px !important; }
             .news-scroll-text { font-size: 11px; }
         }
     </style>
@@ -931,14 +948,27 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             <span style="display:inline-block; width:8px; height:8px; background:var(--cyan-glow); border-radius:50%; box-shadow:0 0 8px var(--cyan-glow);"></span>
             ⚡ HARI MASTER QUANTUM OI RADAR
         </div>
-        <div style="font-size:11px; color:var(--text-dim);" id="expTimeTag">EXP: -- | SYNC: --</div>
-        <a href="/" class="btn-back-chart">⬅ CHARTS</a>
+        <div style="display:flex; align-items:center; gap:8px;">
+            <button class="btn-audio-toggle" id="audioToggleBtn" onclick="toggleAudioAlert()">
+                <span>🔔 ALERT: ON</span>
+            </button>
+            <div style="font-size:10.5px; color:var(--text-dim);" id="expTimeTag">EXP: -- | SYNC: --</div>
+            <a href="/" class="btn-back-chart">⬅ CHARTS</a>
+        </div>
     </div>
 
     <div class="signal-strip">
         <div>
-            <div style="font-size:9px; color:var(--text-dim); text-transform:uppercase;">VERDICT:</div>
+            <div style="font-size:8.5px; color:var(--text-dim); text-transform:uppercase;">LIVE DIRECTION & TRAP:</div>
             <div class="verdict-tag" id="verdictText" style="color:var(--green-glow);">SCANNING...</div>
+        </div>
+
+        <div class="power-meter-container">
+            <span style="font-size:9.5px; font-weight:800; color:var(--green-glow);">BULLS: <span id="txtBullPower">50%</span></span>
+            <div class="power-bar-track">
+                <div class="power-bar-fill" id="fillBullPower" style="width:50%;"></div>
+            </div>
+            <span style="font-size:9.5px; font-weight:800; color:var(--red-glow);">BEARS</span>
         </div>
 
         <div class="major-node-box">
@@ -953,8 +983,8 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         </div>
 
         <div style="text-align:right;">
-            <div style="font-size:9px; color:var(--text-dim); text-transform:uppercase;">ACTION:</div>
-            <div style="font-size:11.5px; font-weight:900; color:var(--cyan-glow);" id="actionText">CALCULATING...</div>
+            <div style="font-size:8.5px; color:var(--text-dim); text-transform:uppercase;">ACTION:</div>
+            <div style="font-size:11px; font-weight:900; color:var(--cyan-glow);" id="actionText">CALCULATING...</div>
         </div>
     </div>
 
@@ -981,12 +1011,19 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         </div>
     </div>
 
-    <div class="news-radar-deck">
-        <div class="radar-badge-box"><span>🔴 લાઈવ ન્યૂઝ</span></div>
-        <div class="news-ticker-container">
-            <div class="news-scroll-text" id="radarNewsText">
-                📢 નિફ્ટી લાઈવ ઓપન ઈન્ટરેસ્ટ સ્કેન થઈ રહ્યો છે... નજીકની કઈ સ્ટ્રાઈક પર મોટા પાયે પોઝિશન બની રહી છે તેની વિગત અહીં લાઈવ લખાશે...
+    <div class="confidence-deck">
+        <div style="display:flex; align-items:center; gap:8px;">
+            <div style="background:#ff2255; color:#fff; font-weight:900; font-size:9.5px; padding:2px 6px; border-radius:3px; flex-shrink:0;">
+                🔴 લાઈવ ન્યૂઝ
             </div>
+            <div class="news-ticker-container">
+                <div class="news-scroll-text" id="radarNewsText">
+                    📢 નિફ્ટી લાઈવ ઓપન ઈન્ટરેસ્ટ સ્કેન થઈ રહ્યો છે...
+                </div>
+            </div>
+        </div>
+        <div style="font-size:11px; color:#38bdf8; font-weight:800; border-top:1px dashed #1a2a44; padding-top:2px;" id="nextStepText">
+            💡 NEXT STEP: કેલ્ક્યુલેટિંગ...
         </div>
     </div>
 
@@ -998,6 +1035,73 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         let streamData = null;
         let callNodePositions = [];
         let putNodePositions = [];
+
+        // AUDIO ALERT ENGINE (Web Audio API)
+        let audioCtx = null;
+        let isAudioEnabled = true;
+        let lastPlayedAlert = "";
+
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function playDoubleBeep(freq1 = 880, freq2 = 1200) {
+            if (!isAudioEnabled) return;
+            initAudio();
+            try {
+                let osc1 = audioCtx.createOscillator();
+                let gain1 = audioCtx.createGain();
+                osc1.type = 'sine';
+                osc1.frequency.setValueAtTime(freq1, audioCtx.currentTime);
+                gain1.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gain1.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
+                osc1.connect(gain1);
+                gain1.connect(audioCtx.destination);
+                osc1.start();
+                osc1.stop(audioCtx.currentTime + 0.15);
+
+                setTimeout(() => {
+                    let osc2 = audioCtx.createOscillator();
+                    let gain2 = audioCtx.createGain();
+                    osc2.type = 'sine';
+                    osc2.frequency.setValueAtTime(freq2, audioCtx.currentTime);
+                    gain2.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gain2.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.25);
+                    osc2.connect(gain2);
+                    gain2.connect(audioCtx.destination);
+                    osc2.start();
+                    osc2.stop(audioCtx.currentTime + 0.25);
+                }, 160);
+            } catch (e) {
+                console.log("Audio play error:", e);
+            }
+        }
+
+        function toggleAudioAlert() {
+            initAudio();
+            isAudioEnabled = !isAudioEnabled;
+            const btn = document.getElementById('audioToggleBtn');
+            if (isAudioEnabled) {
+                btn.innerHTML = "<span>🔔 ALERT: ON</span>";
+                btn.style.color = "var(--green-glow)";
+                btn.style.borderColor = "var(--green-glow)";
+                btn.style.background = "#14241e";
+                playDoubleBeep(880, 1200);
+            } else {
+                btn.innerHTML = "<span>🔕 ALERT: OFF</span>";
+                btn.style.color = "#94a3b8";
+                btn.style.borderColor = "#334155";
+                btn.style.background = "#0d1522";
+            }
+        }
+
+        document.body.addEventListener('click', initAudio, { once: true });
+        document.body.addEventListener('touchstart', initAudio, { once: true });
 
         function resize() {
             canvas.width = container.clientWidth;
@@ -1017,6 +1121,26 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 document.getElementById('spotCenterVal').innerText = `₹ ${streamData.spot.toLocaleString()}`;
                 
                 document.getElementById('radarNewsText').innerText = streamData.news;
+                document.getElementById('nextStepText').innerText = `💡 NEXT STEP & GUIDANCE: ${streamData.next_step}`;
+
+                if (streamData.bull_power !== undefined) {
+                    document.getElementById('txtBullPower').innerText = `${streamData.bull_power}%`;
+                    document.getElementById('fillBullPower').style.width = `${streamData.bull_power}%`;
+                }
+
+                // AUDIO BEEP TRIGGER LOGIC
+                if (streamData.alert_type && streamData.alert_type !== "NORMAL") {
+                    if (streamData.alert_type !== lastPlayedAlert) {
+                        lastPlayedAlert = streamData.alert_type;
+                        if (streamData.alert_type === "REVERSAL_BUY") {
+                            playDoubleBeep(880, 1400);
+                        } else if (streamData.alert_type === "BEARISH_ALERT") {
+                            playDoubleBeep(700, 450);
+                        } else if (streamData.alert_type === "BULLISH_TREND") {
+                            playDoubleBeep(950, 1200);
+                        }
+                    }
+                }
 
                 let displayTime = streamData.time;
                 if (!displayTime || displayTime.length < 4) {
@@ -1092,7 +1216,6 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             }
         }
 
-        // FLOATING BADGE FOR LIVE + / - OI CHANGE
         function drawFloatingOIBadge(x, y, text, isPositive, isNegative, isMain, isAtm) {
             ctx.save();
             ctx.font = 'bold 9.5px monospace, sans-serif';
@@ -1134,7 +1257,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             const endX = canvas.width;
             const t = Date.now() * 0.0025;
 
-            // 1. CALL LINES (PERFECTLY SPREAD OUT ON INDIVIDUAL CURVES)
+            // 1. CALL LINES
             callNodePositions.forEach((targetY, i) => {
                 let callItem = (streamData && streamData.calls && streamData.calls[i]) ? streamData.calls[i] : null;
                 let isMain = (streamData && streamData.main_res && callItem && callItem.strike === streamData.main_res.strike);
@@ -1165,7 +1288,6 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 ctx.arc(px, py, isMain ? 3.8 : (isAtm ? 3.0 : 2.0), 0, Math.PI * 2);
                 ctx.fill();
 
-                // STAGGERED SPREAD FORMULA (NO VERTICAL PILE-UP)
                 if (callItem) {
                     let lxProg = 0.50 + ((i % 4) * 0.08);
                     let lx = Math.pow(1 - lxProg, 3) * startX + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1x + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * endX;
@@ -1176,7 +1298,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 }
             });
 
-            // 2. PUT LINES (PERFECTLY SPREAD OUT ON INDIVIDUAL CURVES)
+            // 2. PUT LINES
             putNodePositions.forEach((targetY, i) => {
                 let putItem = (streamData && streamData.puts && streamData.puts[i]) ? streamData.puts[i] : null;
                 let isMain = (streamData && streamData.main_sup && putItem && putItem.strike === streamData.main_sup.strike);
@@ -1207,7 +1329,6 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 ctx.arc(px, py, isMain ? 3.8 : (isAtm ? 3.0 : 2.0), 0, Math.PI * 2);
                 ctx.fill();
 
-                // STAGGERED SPREAD FORMULA (NO VERTICAL PILE-UP)
                 if (putItem) {
                     let lxProg = 0.50 + ((i % 4) * 0.08);
                     let lx = Math.pow(1 - lxProg, 3) * startX + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1x + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * endX;
