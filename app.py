@@ -352,7 +352,7 @@ def get_market_data(
         "pcr": pcr
     }
 
-# ==================== ADVANCED INTRADAY RADAR ENGINE ====================
+# ==================== ADVANCED INTRADAY RADAR ENGINE (STRICT ORDER FIXED) ====================
 @app.get("/api/oi/quantum-stream")
 def get_quantum_oi_stream():
     global BASELINE_OI_MAP
@@ -386,7 +386,9 @@ def get_quantum_oi_stream():
     total_put_oi = 0
     needs_save = False
 
-    # 1. CALL STRIKES (4 OTM -> 2 ITM -> ATM):
+    # 1. CALL STRIKES (From Highest OTM -> 2 ITM -> Spot Axis ATM):
+    # Order: [4, 3, 2, 1, -1, -2, 0]
+    # For ATM 23450: 23650(OTM), 23600(OTM), 23550(OTM), 23500(OTM), 23400(ITM), 23350(ITM), 23450(ATM)
     call_steps = [4, 3, 2, 1, -1, -2, 0]
     for i in call_steps:
         stk = atm + (i * 50)
@@ -418,7 +420,16 @@ def get_quantum_oi_stream():
             "is_atm": (stk == atm)
         })
 
-    # 2. PUT STRIKES (ATM -> 2 ITM -> 4 OTM):
+    # 2. PUT STRIKES (From Spot Axis ATM -> 2 ITM -> 4 OTM In Exact Order):
+    # Order: [0, 1, 2, -1, -2, -3, -4]
+    # For ATM 23450:
+    # i=0:  23450 (ATM)
+    # i=1:  23500 (ITM)
+    # i=2:  23550 (ITM)
+    # i=-1: 23400 (OTM)
+    # i=-2: 23350 (OTM)
+    # i=-3: 23300 (OTM)
+    # i=-4: 23250 (OTM)
     put_steps = [0, 1, 2, -1, -2, -3, -4]
     for i in put_steps:
         stk = atm + (i * 50)
@@ -739,7 +750,7 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
 </html>
 """
 
-# ==================== QUANTUM REVERSAL MATRIX (CLEANEST PRO UI WITH 2 ITM) ====================
+# ==================== QUANTUM REVERSAL MATRIX (PERFECT ALIGNED PRO UI) ====================
 OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="gu">
 <head>
@@ -1279,7 +1290,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             const endX = canvas.width;
             const t = Date.now() * 0.0025;
 
-            // 1. CALL LINES
+            // 1. CALL LINES (Smooth Staggered Float)
             callNodePositions.forEach((targetY, i) => {
                 let callItem = (streamData && streamData.calls && streamData.calls[i]) ? streamData.calls[i] : null;
                 let isMain = (streamData && streamData.main_res && callItem && callItem.strike === streamData.main_res.strike);
@@ -1312,7 +1323,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 ctx.fill();
 
                 if (callItem) {
-                    let lxProg = 0.50 + ((i % 4) * 0.08);
+                    let lxProg = 0.46 + ((i % 5) * 0.07);
                     let lx = Math.pow(1 - lxProg, 3) * startX + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1x + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * endX;
                     let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2y + Math.pow(lxProg, 3) * targetY;
                     
@@ -1321,7 +1332,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 }
             });
 
-            // 2. PUT LINES
+            // 2. PUT LINES (Smooth Staggered Float)
             putNodePositions.forEach((targetY, i) => {
                 let putItem = (streamData && streamData.puts && streamData.puts[i]) ? streamData.puts[i] : null;
                 let isMain = (streamData && streamData.main_sup && putItem && putItem.strike === streamData.main_sup.strike);
@@ -1354,7 +1365,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 ctx.fill();
 
                 if (putItem) {
-                    let lxProg = 0.50 + ((i % 4) * 0.08);
+                    let lxProg = 0.46 + ((i % 5) * 0.07);
                     let lx = Math.pow(1 - lxProg, 3) * startX + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1x + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * endX;
                     let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2y + Math.pow(lxProg, 3) * targetY;
                     
