@@ -41,12 +41,34 @@ if os.path.exists(json_path):
     except Exception as e:
         print("❌ Instrument load error:", e)
 
-BASELINE_OI_MAP = {}
+BASELINE_FILE = os.path.join(BASE_DIR, "daily_baseline.json")
 
 def get_current_ist_time():
     utc_now = datetime.datetime.utcnow()
     ist_now = utc_now + datetime.timedelta(hours=5, minutes=30)
     return ist_now
+
+def get_persisted_baselines():
+    today_str = get_current_ist_time().strftime("%Y-%m-%d")
+    if os.path.exists(BASELINE_FILE):
+        try:
+            with open(BASELINE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if data.get("date") == today_str:
+                    return data.get("baselines", {})
+        except Exception:
+            pass
+    return {}
+
+def save_persisted_baselines(base_map):
+    today_str = get_current_ist_time().strftime("%Y-%m-%d")
+    try:
+        with open(BASELINE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"date": today_str, "baselines": base_map}, f)
+    except Exception:
+        pass
+
+BASELINE_OI_MAP = get_persisted_baselines()
 
 def parse_expiry_date(e_str):
     if not e_str:
@@ -215,7 +237,7 @@ def get_market_data(
             spot = float(spot_candles[-1]["close"])
     else:
         if spot <= 0:
-            spot = 23325.00
+            spot = 23440.80
         base_time = int(get_current_ist_time().timestamp()) - 3600 * 5
         cur = spot - 20.0
         spot_candles = []
@@ -262,23 +284,8 @@ def get_market_data(
         total_call_oi += ce_oi
         total_put_oi += pe_oi
 
-        if ce_oi >= 10000000:
-            ce_oi_str = f"{round(ce_oi / 10000000, 2)}Cr"
-        elif ce_oi >= 100000:
-            ce_oi_str = f"{round(ce_oi / 100000, 2)}L"
-        elif ce_oi > 0:
-            ce_oi_str = str(ce_oi)
-        else:
-            ce_oi_str = "-"
-
-        if pe_oi >= 10000000:
-            pe_oi_str = f"{round(pe_oi / 10000000, 2)}Cr"
-        elif pe_oi >= 100000:
-            pe_oi_str = f"{round(pe_oi / 100000, 2)}L"
-        elif pe_oi > 0:
-            pe_oi_str = str(pe_oi)
-        else:
-            pe_oi_str = "-"
+        ce_oi_str = f"{round(ce_oi / 10000000, 2)}Cr" if ce_oi >= 10000000 else (f"{round(ce_oi / 100000, 2)}L" if ce_oi >= 100000 else (str(ce_oi) if ce_oi > 0 else "-"))
+        pe_oi_str = f"{round(pe_oi / 10000000, 2)}Cr" if pe_oi >= 10000000 else (f"{round(pe_oi / 100000, 2)}L" if pe_oi >= 100000 else (str(pe_oi) if pe_oi > 0 else "-"))
 
         chain.append({
             "strike": s,
@@ -345,7 +352,7 @@ def get_market_data(
         "pcr": pcr
     }
 
-# ==================== ADVANCED CONFIDENCE & TRAP RADAR ENGINE ====================
+# ==================== ADVANCED INTRADAY RADAR ENGINE ====================
 @app.get("/api/oi/quantum-stream")
 def get_quantum_oi_stream():
     global BASELINE_OI_MAP
@@ -358,13 +365,13 @@ def get_quantum_oi_stream():
         pass
 
     if spot <= 0:
-        spot = 23325.00
+        spot = 23440.80
 
     atm = int(round(spot / 50.0) * 50)
     all_exp = get_all_active_expiries()
     active_exp = all_exp[0] if all_exp else ""
     
-    strikes = [atm + (i * 50) for i in range(-7, 8)]
+    strikes = [atm + (i * 50) for i in range(-8, 9)]
     token_map, tokens_to_fetch = get_tokens_by_expiry_and_strikes(active_exp, strikes)
     live_quotes = fetch_angel_market_data(tokens_to_fetch)
 
@@ -375,24 +382,30 @@ def get_quantum_oi_stream():
 
     total_call_chg = 0
     total_put_chg = 0
+    total_call_oi = 0
+    total_put_oi = 0
+    needs_save = False
 
-    call_steps = [6, 5, 4, 3, 2, 1, 0]
+    # 1. CALL STRIKES (4 OTM -> 2 ITM -> ATM):
+    call_steps = [4, 3, 2, 1, -1, -2, 0]
     for i in call_steps:
         stk = atm + (i * 50)
         tok = token_map.get(stk, {}).get("CE", "")
         q = live_quotes.get(tok, {})
         real_oi = int(q.get("oi", 0))
         real_ltp = float(q.get("ltp", 0.0))
+        total_call_oi += real_oi
 
         base_key = f"CE_{stk}"
         if base_key not in BASELINE_OI_MAP or BASELINE_OI_MAP[base_key] == 0:
             BASELINE_OI_MAP[base_key] = real_oi
+            needs_save = True
 
         base_oi = BASELINE_OI_MAP[base_key]
         chg = real_oi - base_oi
         total_call_chg += max(0, chg)
-
-        tag = "ATM" if stk == atm else "OTM"
+        
+        tag = "ATM" if stk == atm else ("ITM" if stk < atm else "OTM")
 
         calls_data.append({
             "strike": stk,
@@ -405,23 +418,26 @@ def get_quantum_oi_stream():
             "is_atm": (stk == atm)
         })
 
-    put_steps = [0, -1, -2, -3, -4, -5, -6]
+    # 2. PUT STRIKES (ATM -> 2 ITM -> 4 OTM):
+    put_steps = [0, 1, 2, -1, -2, -3, -4]
     for i in put_steps:
         stk = atm + (i * 50)
         tok = token_map.get(stk, {}).get("PE", "")
         q = live_quotes.get(tok, {})
         real_oi = int(q.get("oi", 0))
         real_ltp = float(q.get("ltp", 0.0))
+        total_put_oi += real_oi
 
         base_key = f"PE_{stk}"
         if base_key not in BASELINE_OI_MAP or BASELINE_OI_MAP[base_key] == 0:
             BASELINE_OI_MAP[base_key] = real_oi
+            needs_save = True
 
         base_oi = BASELINE_OI_MAP[base_key]
         chg = real_oi - base_oi
         total_put_chg += max(0, chg)
 
-        tag = "ATM" if stk == atm else "OTM"
+        tag = "ATM" if stk == atm else ("ITM" if stk > atm else "OTM")
 
         puts_data.append({
             "strike": stk,
@@ -434,6 +450,9 @@ def get_quantum_oi_stream():
             "is_atm": (stk == atm)
         })
 
+    if needs_save:
+        save_persisted_baselines(BASELINE_OI_MAP)
+
     main_res = max(calls_data, key=lambda x: x["oi"]) if calls_data else calls_data[3]
     main_sup = max(puts_data, key=lambda x: x["oi"]) if puts_data else puts_data[0]
 
@@ -442,6 +461,7 @@ def get_quantum_oi_stream():
 
     sum_chg = total_call_chg + total_put_chg
     bull_power = round((total_put_chg / sum_chg) * 100) if sum_chg > 0 else 50
+    live_pcr = round(total_put_oi / total_call_oi, 2) if total_call_oi > 0 else 1.0
 
     is_hunting = (main_sup and spot < (main_sup["strike"] - 5) and spot >= (main_sup["strike"] - 75) and max_put_add and max_put_add["chg"] > 0)
     is_strong_up = (bull_power >= 62 and max_put_add and max_put_add["chg"] > (max_call_add["chg"] if max_call_add else 0))
@@ -452,7 +472,7 @@ def get_quantum_oi_stream():
         color = "#00ff88"
         action = f"ખરીદો {atm} CE (Discount Entry) | લક્ષ્ય: {main_res['strike']}"
         next_step = f"હમણાં માર્કેટ {main_sup['strike']} નીચે પેનિક કરી રહ્યું છે, પણ પુટ રાઇટર્સ મજબૂત છે. ગભરાઈને કૉલ વેચતા નહીં! અટકીને ઉપર રોકેટ Reversal મારશે!"
-        news = f"⚡ CONFIDENCE ALERT: નિફ્ટી સ્પોટ ({spot}) એ {main_sup['strike']} નીચે રિટેલર્સના Stop-Loss હંટ કર્યા છે! મોટા પુટ રાઇટર્સ (+{max_put_add['chg_str']}) પોઝિશન પકડીને બેઠા છે! આ ફોલ્સ ડાઉન છે, થોડીવારમાં બજાર 23,{main_res['strike']%1000} તરફ રોકેટ ઉડાણ ભરશે! કૉલ હોલ્ડ રાખો!"
+        news = f"⚡ CONFIDENCE ALERT: નિફ્ટી સ્પોટ ({spot}) એ {main_sup['strike']} નીચે રિટેલર્સના Stop-Loss હંટ કર્યા છે! મોટા પુટ રાઇટર્સ પોઝિશન પકડીને બેઠા છે! આ ફોલ્સ ડાઉન છે, થોડીવારમાં બજાર 23,{main_res['strike']%1000} તરફ રોકેટ ઉડાણ ભરશે! કૉલ હોલ્ડ રાખો!"
         alert_type = "REVERSAL_BUY"
     elif is_strong_up:
         verdict = f"🚀 STRONG UP-TREND: {bull_power}% Buyers In Control"
@@ -473,7 +493,7 @@ def get_quantum_oi_stream():
         color = "#fbbf24"
         action = f"બ્રેકઆઉટની રાહ જુઓ"
         next_step = f"માર્કેટ {main_sup['strike']} અને {main_res['strike']} ની વચ્ચે અટવાયેલું છે."
-        news = f"📢 લાઈવ સમાચાર: નિફ્ટી સ્પોટ {spot} પર ચાલે છે. નજીકનો સપોર્ટ {main_sup['strike']} PE અને રેઝિસ્ટન્સ {main_res['strike']} CE છે."
+        news = f"📢 લાઈવ સમાચાર: નિફ્ટી સ્પોટ {spot} પર ચાલે છે. નજીકનો સપોર્ટ {main_sup['strike']} PE ({main_sup['oi_str']}) અને રેઝિસ્ટન્સ {main_res['strike']} CE ({main_res['oi_str']}) છે."
 
     return {
         "spot": spot,
@@ -488,6 +508,7 @@ def get_quantum_oi_stream():
         "color": color,
         "action": action,
         "bull_power": bull_power,
+        "pcr": live_pcr,
         "next_step": next_step,
         "news": news,
         "alert_type": alert_type
@@ -536,7 +557,7 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
             <select class="expiry-select" id="expiryDropdown" onchange="onExpiryChange()">
                 <option value="">Loading Expiries...</option>
             </select>
-            <div class="spot-badge" id="spotBadge">NIFTY: 23,325.00</div>
+            <div class="spot-badge" id="spotBadge">NIFTY: 23,440.80</div>
         </div>
         <div style="display:flex; gap:10px; align-items:center;">
             <a href="/oi-analytics" target="_blank" class="btn-nav-oi">⚡ QUANTUM REVERSAL MATRIX</a>
@@ -661,19 +682,19 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
                 }
 
                 if (data.candles && data.candles.length > 0) {
-                    spotSeries.setData(data.candles.map(c => ({ time: c.time + 19800, open: c.open, high: c.high, low: c.low, close: c.close })));
+                    spotSeries.setData(data.candles.map(c => ({ time: c.time + 19800, open: c.open, high: c.high, low: c.close })));
                     if (isFirstLoad) { spotChart.timeScale().fitContent(); isFirstLoad = false; }
                 }
 
                 if (data.ce_candles && data.ce_candles.length > 0) {
-                    ceSeries.setData(data.ce_candles.map(c => ({ time: c.time + 19800, open: c.open, high: c.high, low: c.low, close: c.close })));
+                    ceSeries.setData(data.ce_candles.map(c => ({ time: c.time + 19800, open: c.open, high: c.high, low: c.close })));
                     let lastP = data.ce_candles[data.ce_candles.length - 1].close;
                     document.getElementById('lbl_ce').innerText = `CALL: NIFTY ${data.active_ce} CE (₹${lastP.toFixed(2)})`;
                     if (forceFit) ceChart.timeScale().fitContent();
                 }
 
                 if (data.pe_candles && data.pe_candles.length > 0) {
-                    peSeries.setData(data.pe_candles.map(c => ({ time: c.time + 19800, open: c.open, high: c.high, low: c.low, close: c.close })));
+                    peSeries.setData(data.pe_candles.map(c => ({ time: c.time + 19800, open: c.open, high: c.high, low: c.close })));
                     let lastP = data.pe_candles[data.pe_candles.length - 1].close;
                     document.getElementById('lbl_pe').innerText = `PUT: NIFTY ${data.active_pe} PE (₹${lastP.toFixed(2)})`;
                     if (forceFit) peChart.timeScale().fitContent();
@@ -718,7 +739,7 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
 </html>
 """
 
-# ==================== QUANTUM REVERSAL MATRIX (WITH AUDIO BEEP ENGINE) ====================
+# ==================== QUANTUM REVERSAL MATRIX (CLEANEST PRO UI WITH 2 ITM) ====================
 OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="gu">
 <head>
@@ -759,7 +780,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             padding: 0 14px;
             flex-shrink: 0;
         }
-        .header-title { font-size: 14.5px; font-weight: 900; color: var(--cyan-glow); display: flex; align-items: center; gap: 8px; }
+        .header-title { font-size: 14px; font-weight: 900; color: var(--cyan-glow); display: flex; align-items: center; gap: 8px; }
         .btn-audio-toggle {
             background: #14241e;
             border: 1.3px solid var(--green-glow);
@@ -788,8 +809,8 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         }
         .verdict-tag { font-size: 13.5px; font-weight: 900; }
 
-        .major-node-box { display: flex; gap: 10px; align-items: center; }
-        .node-badge { padding: 3px 10px; border-radius: 4px; font-size: 11.5px; font-weight: 900; display: flex; align-items: center; gap: 5px; }
+        .major-node-box { display: flex; gap: 8px; align-items: center; }
+        .node-badge { padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 900; display: flex; align-items: center; gap: 4px; }
         .res-node { background: rgba(255, 34, 85, 0.2); border: 1.5px solid var(--red-glow); color: var(--red-glow); }
         .sup-node { background: rgba(0, 255, 136, 0.2); border: 1.5px solid var(--green-glow); color: var(--green-glow); }
 
@@ -802,7 +823,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             border-radius: 4px;
             border: 1px solid #1e293b;
         }
-        .power-bar-track { width: 70px; height: 7px; background: #ff2255; border-radius: 4px; overflow: hidden; }
+        .power-bar-track { width: 65px; height: 7px; background: #ff2255; border-radius: 4px; overflow: hidden; }
         .power-bar-fill { height: 100%; background: #00ff88; transition: width 0.5s ease; }
 
         .stream-workspace {
@@ -822,8 +843,8 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         #streamCanvas { width: 100%; height: 100%; display: block; }
 
         .strike-nodes-col {
-            width: 410px;
-            max-width: 48%;
+            width: 440px;
+            max-width: 49%;
             background: #080d16;
             border-left: 1.5px solid #142033;
             display: flex;
@@ -845,15 +866,16 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             gap: 2px;
         }
 
+        /* CLEAR, PRO STRIKE CARD */
         .strike-card-node {
             background: #0d1522;
             border: 1.2px solid #1f2f45;
             border-radius: 5px;
-            padding: 4px 10px;
+            padding: 4px 8px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            font-size: 13px;
+            font-size: 12.5px;
             position: relative;
             box-shadow: 0 1px 4px rgba(0,0,0,0.5);
             white-space: nowrap;
@@ -861,8 +883,9 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         .node-call { border-left: 4px solid var(--green-glow); }
         .node-put { border-left: 4px solid var(--red-glow); }
         
-        .badge-atm { background: rgba(0, 240, 255, 0.25); color: var(--cyan-glow); border: 1.2px solid var(--cyan-glow); padding: 1px 5px; border-radius: 3px; font-weight: 900; font-size: 10px; }
-        .badge-otm { background: rgba(100, 116, 139, 0.25); color: #cbd5e1; padding: 1px 5px; border-radius: 3px; font-size: 10px; font-weight: 800; }
+        .badge-atm { background: rgba(0, 240, 255, 0.25); color: var(--cyan-glow); border: 1.2px solid var(--cyan-glow); padding: 1px 4px; border-radius: 3px; font-weight: 900; font-size: 9.5px; }
+        .badge-itm { background: rgba(192, 132, 252, 0.25); color: var(--purple-glow); border: 1.2px solid var(--purple-glow); padding: 1px 4px; border-radius: 3px; font-weight: 900; font-size: 9.5px; }
+        .badge-otm { background: rgba(100, 116, 139, 0.25); color: #cbd5e1; padding: 1px 4px; border-radius: 3px; font-size: 9.5px; font-weight: 800; }
 
         .strike-card-node.atm-node-active {
             border: 2px solid var(--cyan-glow) !important;
@@ -935,8 +958,8 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             .power-meter-container { display: none; }
             .stream-workspace { min-height: 600px !important; }
             .matrix-canvas-box { min-height: 600px !important; }
-            .strike-nodes-col { width: 290px !important; max-width: 53% !important; min-height: 600px !important; }
-            .strike-card-node { font-size: 11.5px !important; padding: 3px 6px !important; }
+            .strike-nodes-col { width: 310px !important; max-width: 55% !important; min-height: 600px !important; }
+            .strike-card-node { font-size: 11px !important; padding: 3px 5px !important; }
             .spot-axis-divider { height: 22px !important; font-size: 11px !important; }
             .news-scroll-text { font-size: 11px; }
         }
@@ -968,7 +991,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             <div class="power-bar-track">
                 <div class="power-bar-fill" id="fillBullPower" style="width:50%;"></div>
             </div>
-            <span style="font-size:9.5px; font-weight:800; color:var(--red-glow);">BEARS</span>
+            <span style="font-size:9.5px; font-weight:800; color:var(--cyan-glow); margin-left:4px;">PCR: <span id="txtPcr">1.0</span></span>
         </div>
 
         <div class="major-node-box">
@@ -1001,7 +1024,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 
             <div class="spot-axis-divider" id="spotCenterPill">
                 <span>SPOT AXIS</span>
-                <span id="spotCenterVal">₹ 23,325.0</span>
+                <span id="spotCenterVal">₹ 23,440.8</span>
             </div>
 
             <div style="font-size:10px; font-weight:bold; color:var(--red-glow); text-transform:uppercase; padding-left:2px;">
@@ -1036,7 +1059,6 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         let callNodePositions = [];
         let putNodePositions = [];
 
-        // AUDIO ALERT ENGINE (Web Audio API)
         let audioCtx = null;
         let isAudioEnabled = true;
         let lastPlayedAlert = "";
@@ -1077,9 +1099,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                     osc2.start();
                     osc2.stop(audioCtx.currentTime + 0.25);
                 }, 160);
-            } catch (e) {
-                console.log("Audio play error:", e);
-            }
+            } catch (e) {}
         }
 
         function toggleAudioAlert() {
@@ -1127,8 +1147,10 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                     document.getElementById('txtBullPower').innerText = `${streamData.bull_power}%`;
                     document.getElementById('fillBullPower').style.width = `${streamData.bull_power}%`;
                 }
+                if (streamData.pcr !== undefined) {
+                    document.getElementById('txtPcr').innerText = streamData.pcr;
+                }
 
-                // AUDIO BEEP TRIGGER LOGIC
                 if (streamData.alert_type && streamData.alert_type !== "NORMAL") {
                     if (streamData.alert_type !== lastPlayedAlert) {
                         lastPlayedAlert = streamData.alert_type;
@@ -1160,11 +1182,11 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 streamData.calls.forEach((c, idx) => {
                     let isMain = (streamData.main_res && streamData.main_res.strike === c.strike) ? 'main-res-active' : (c.is_atm ? 'atm-node-active' : '');
                     let badge = c.chg > 0 ? `<span class="glow-plus">${c.chg_str}</span>` : (c.chg < 0 ? `<span class="glow-minus">${c.chg_str}</span>` : `<span style="color:#94a3b8; font-weight:800;">${c.chg_str}</span>`);
-                    let ltpText = c.ltp > 0 ? `(₹${c.ltp.toFixed(2)})` : '';
+                    let ltpText = c.ltp > 0 ? `₹${c.ltp.toFixed(2)}` : '-';
                     let typeBadge = `<span class="badge-${c.type_tag.toLowerCase()}">${c.type_tag}</span>`;
 
                     cHtml += `<div class="strike-card-node node-call ${isMain}" id="cNode_${idx}">
-                        <span><b>${c.strike} CE</b> ${typeBadge} <span style="color:#38bdf8; font-weight:900; margin-left:3px;">${ltpText}</span> <small style="color:#94a3b8; margin-left:2px;">(${c.oi_str})</small></span>
+                        <span><b>${c.strike} CE</b> ${typeBadge} <span style="color:#38bdf8; font-weight:800; margin-left:4px;">${ltpText}</span> <small style="color:#94a3b8; margin-left:3px;">OI:${c.oi_str}</small></span>
                         ${badge}
                     </div>`;
                 });
@@ -1175,11 +1197,11 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 streamData.puts.forEach((p, idx) => {
                     let isMain = (streamData.main_sup && streamData.main_sup.strike === p.strike) ? 'main-sup-active' : (p.is_atm ? 'atm-node-active' : '');
                     let badge = p.chg > 0 ? `<span class="glow-plus">${p.chg_str}</span>` : (p.chg < 0 ? `<span class="glow-minus">${p.chg_str}</span>` : `<span style="color:#94a3b8; font-weight:800;">${p.chg_str}</span>`);
-                    let ltpText = p.ltp > 0 ? `(₹${p.ltp.toFixed(2)})` : '';
+                    let ltpText = p.ltp > 0 ? `₹${p.ltp.toFixed(2)}` : '-';
                     let typeBadge = `<span class="badge-${p.type_tag.toLowerCase()}">${p.type_tag}</span>`;
 
                     pHtml += `<div class="strike-card-node node-put ${isMain}" id="pNode_${idx}">
-                        <span><b>${p.strike} PE</b> ${typeBadge} <span style="color:#ff2255; font-weight:900; margin-left:3px;">${ltpText}</span> <small style="color:#94a3b8; margin-left:2px;">(${p.oi_str})</small></span>
+                        <span><b>${p.strike} PE</b> ${typeBadge} <span style="color:#ff2255; font-weight:800; margin-left:4px;">${ltpText}</span> <small style="color:#94a3b8; margin-left:3px;">OI:${p.oi_str}</small></span>
                         ${badge}
                     </div>`;
                 });
@@ -1262,8 +1284,9 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 let callItem = (streamData && streamData.calls && streamData.calls[i]) ? streamData.calls[i] : null;
                 let isMain = (streamData && streamData.main_res && callItem && callItem.strike === streamData.main_res.strike);
                 let isAtm = (callItem && callItem.is_atm);
+                let isItm = (callItem && callItem.type_tag === "ITM");
                 
-                let lineColor = isMain ? '#ff2255' : (isAtm ? '#00f0ff' : `rgba(0, 255, 136, ${0.30 + (i * 0.08)})`);
+                let lineColor = isMain ? '#ff2255' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : `rgba(0, 255, 136, ${0.30 + (i * 0.08)})`));
                 
                 ctx.beginPath();
                 ctx.lineWidth = isMain ? 3.0 : (isAtm ? 2.4 : 1.4);
@@ -1284,7 +1307,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 let py = Math.pow(1 - pProg, 3) * startY + 3 * Math.pow(1 - pProg, 2) * pProg * cp1y + 3 * (1 - pProg) * Math.pow(pProg, 2) * cp2y + Math.pow(pProg, 3) * targetY;
 
                 ctx.beginPath();
-                ctx.fillStyle = isMain ? '#ff2255' : (isAtm ? '#00f0ff' : '#00ff88');
+                ctx.fillStyle = isMain ? '#ff2255' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : '#00ff88'));
                 ctx.arc(px, py, isMain ? 3.8 : (isAtm ? 3.0 : 2.0), 0, Math.PI * 2);
                 ctx.fill();
 
@@ -1303,8 +1326,9 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 let putItem = (streamData && streamData.puts && streamData.puts[i]) ? streamData.puts[i] : null;
                 let isMain = (streamData && streamData.main_sup && putItem && putItem.strike === streamData.main_sup.strike);
                 let isAtm = (putItem && putItem.is_atm);
+                let isItm = (putItem && putItem.type_tag === "ITM");
                 
-                let lineColor = isMain ? '#00ff88' : (isAtm ? '#00f0ff' : `rgba(255, 34, 85, ${0.30 + (i * 0.08)})`);
+                let lineColor = isMain ? '#00ff88' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : `rgba(255, 34, 85, ${0.30 + (i * 0.08)})`));
                 
                 ctx.beginPath();
                 ctx.lineWidth = isMain ? 3.0 : (isAtm ? 2.4 : 1.4);
@@ -1325,7 +1349,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 let py = Math.pow(1 - pProg, 3) * startY + 3 * Math.pow(1 - pProg, 2) * pProg * cp1y + 3 * (1 - pProg) * Math.pow(pProg, 2) * cp2y + Math.pow(pProg, 3) * targetY;
 
                 ctx.beginPath();
-                ctx.fillStyle = isMain ? '#00ff88' : (isAtm ? '#00f0ff' : '#ff2255');
+                ctx.fillStyle = isMain ? '#00ff88' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : '#ff2255'));
                 ctx.arc(px, py, isMain ? 3.8 : (isAtm ? 3.0 : 2.0), 0, Math.PI * 2);
                 ctx.fill();
 
