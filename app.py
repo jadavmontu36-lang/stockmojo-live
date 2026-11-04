@@ -26,6 +26,14 @@ except Exception as e:
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
+TF_MAP = {
+    "1m": "ONE_MINUTE",
+    "3m": "THREE_MINUTE",
+    "5m": "FIVE_MINUTE",
+    "15m": "FIFTEEN_MINUTE",
+    "1h": "ONE_HOUR"
+}
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTRUMENT_CACHE = []
 json_path = os.path.join(BASE_DIR, "nfo_instruments.json")
@@ -33,10 +41,11 @@ if os.path.exists(json_path):
     try:
         with open(json_path, "r", encoding="utf-8") as f:
             INSTRUMENT_CACHE = json.load(f)
-    except Exception:
-        pass
+            print(f"✅ Loaded {len(INSTRUMENT_CACHE)} instruments")
+    except Exception as e:
+        print("❌ Instrument load error:", e)
 
-# Ultra-Fast Smart Caching (Server freeze / rate limit atkaavva mate)
+# Fast In-Memory Cache
 CACHE_STORE = {
     "market_data": None,
     "market_time": 0,
@@ -154,8 +163,48 @@ def fetch_india_vix():
         pass
     return vix
 
+def fetch_candle_data_for_token(token, interval_str, exchange="NFO"):
+    ist_now = get_current_ist_time()
+    to_date = ist_now.strftime("%Y-%m-%d 15:30")
+    from_date = (ist_now - datetime.timedelta(days=3)).strftime("%Y-%m-%d 09:15")
+    
+    historic_param = {
+        "exchange": exchange,
+        "symboltoken": str(token),
+        "interval": interval_str,
+        "fromdate": from_date,
+        "todate": to_date
+    }
+    candles = []
+    try:
+        data = smartApi.getCandleData(historic_param)
+        if data and isinstance(data, dict) and data.get("status") and data.get("data"):
+            for row in data["data"]:
+                try:
+                    time_str = row[0][:19]
+                    dt = datetime.datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
+                    candles.append({
+                        "time": int(dt.timestamp()),
+                        "open": float(row[1]),
+                        "high": float(row[2]),
+                        "low": float(row[3]),
+                        "close": float(row[4]),
+                        "volume": float(row[5]) if len(row) > 5 else 1000
+                    })
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return candles
+
+# ==================== LIVE MARKET DATA REST API ====================
 @app.get("/api/market_data")
-def get_market_data():
+def get_market_data(
+    tf: str = "5m", 
+    expiry: str = "", 
+    selected_ce_strike: int = 0, 
+    selected_pe_strike: int = 0
+):
     now = time.time()
     if CACHE_STORE["market_data"] and (now - CACHE_STORE["market_time"]) < 2.5:
         return CACHE_STORE["market_data"]
@@ -163,77 +212,94 @@ def get_market_data():
     spot = CACHE_STORE["last_spot"]
     try:
         res = smartApi.ltpData("NSE", "Nifty 50", "99926000")
-        if res and res.get("data") and res["data"].get("ltp"):
+        if res and isinstance(res, dict) and res.get("data") and res["data"].get("ltp"):
             spot = float(res["data"]["ltp"])
             CACHE_STORE["last_spot"] = spot
     except Exception:
         pass
 
-    atm = int(round(spot / 50.0) * 50)
-    all_exp = get_all_active_expiries()
-    active_exp = all_exp[0] if all_exp else "09NOV2026"
-    strikes = [atm + (i * 50) for i in range(-5, 6)]
-    token_map = get_tokens_by_expiry_and_strikes(active_exp, strikes)
+    atm_strike = int(round(spot / 50.0) * 50)
+    all_expiries = get_all_active_expiries()
+    active_expiry = expiry if (expiry and expiry in all_expiries) else (all_expiries[0] if all_expiries else "09NOV2026")
+
+    active_ce = selected_ce_strike if selected_ce_strike > 0 else atm_strike
+    active_pe = selected_pe_strike if selected_pe_strike > 0 else atm_strike
+
+    strikes = [atm_strike + (i * 50) for i in range(-5, 6)]
+    token_map = get_tokens_by_expiry_and_strikes(active_expiry, strikes)
     
-    tokens = []
+    tokens_to_fetch = []
     for s in token_map.values():
-        if "CE" in s: tokens.append(s["CE"])
-        if "PE" in s: tokens.append(s["PE"])
-    quotes = fetch_angel_market_data(tokens)
+        if "CE" in s: tokens_to_fetch.append(s["CE"])
+        if "PE" in s: tokens_to_fetch.append(s["PE"])
+    live_quotes = fetch_angel_market_data(tokens_to_fetch)
 
     chain = []
-    total_c_oi, total_p_oi = 0, 0
+    total_call_oi = 0
+    total_put_oi = 0
+
     for s in strikes:
         ce_tok = token_map.get(s, {}).get("CE", "")
         pe_tok = token_map.get(s, {}).get("PE", "")
-        
-        c_q = quotes.get(ce_tok, {})
-        p_q = quotes.get(pe_tok, {})
 
-        c_ltp = c_q.get("ltp") or max(1.0, round(146.85 - (s - spot)*0.45, 2))
-        p_ltp = p_q.get("ltp") or max(1.0, round(145.10 + (s - spot)*0.45, 2))
-        c_oi = c_q.get("oi", 450000)
-        p_oi = p_q.get("oi", 380000)
-        total_c_oi += c_oi
-        total_p_oi += p_oi
+        ce_d = live_quotes.get(ce_tok, {})
+        pe_d = live_quotes.get(pe_tok, {})
+
+        ce_ltp = float(ce_d.get("ltp") or max(1.0, round(165 - (s - spot)*0.45, 2)))
+        pe_ltp = float(pe_d.get("ltp") or max(1.0, round(185 + (s - spot)*0.45, 2)))
+        ce_oi = int(ce_d.get("oi") or 450000)
+        pe_oi = int(pe_d.get("oi") or 380000)
+
+        total_call_oi += ce_oi
+        total_put_oi += pe_oi
 
         chain.append({
             "strike": s,
-            "ltp_ce": c_ltp,
-            "ltp_pe": p_ltp,
-            "oi_ce": c_oi,
-            "oi_pe": p_oi,
-            "oi_ce_str": f"{round(c_oi/100000, 1)}L",
-            "oi_pe_str": f"{round(p_oi/100000, 1)}L",
-            "is_atm": (s == atm),
-            "open_ce": c_q.get("open", round(c_ltp * 0.85, 2)),
-            "high_ce": c_q.get("high", round(c_ltp * 1.35, 2)),
-            "low_ce": c_q.get("low", round(c_ltp * 0.70, 2)),
-            "close_ce": c_q.get("close", round(c_ltp * 0.90, 2)),
-            "open_pe": p_q.get("open", round(p_ltp * 0.85, 2)),
-            "high_pe": p_q.get("high", round(p_ltp * 1.35, 2)),
-            "low_pe": p_q.get("low", round(p_ltp * 0.70, 2)),
-            "close_pe": p_q.get("close", round(p_ltp * 0.90, 2))
+            "ltp_ce": ce_ltp,
+            "ltp_pe": pe_ltp,
+            "oi_ce": ce_oi,
+            "oi_pe": pe_oi,
+            "oi_ce_str": f"{round(ce_oi / 100000, 1)}L",
+            "oi_pe_str": f"{round(pe_oi / 100000, 1)}L",
+            "is_atm": (s == atm_strike),
+            "open_ce": ce_d.get("open", round(ce_ltp * 0.85, 2)),
+            "high_ce": ce_d.get("high", round(ce_ltp * 1.35, 2)),
+            "low_ce": ce_d.get("low", round(ce_ltp * 0.70, 2)),
+            "close_ce": ce_d.get("close", round(ce_ltp * 0.90, 2)),
+            "open_pe": pe_d.get("open", round(pe_ltp * 0.85, 2)),
+            "high_pe": pe_d.get("high", round(pe_ltp * 1.35, 2)),
+            "low_pe": pe_d.get("low", round(pe_ltp * 0.70, 2)),
+            "close_pe": pe_d.get("close", round(pe_ltp * 0.90, 2))
         })
 
-    pcr = round(total_p_oi / total_c_oi, 2) if total_c_oi > 0 else 0.78
-    vix = fetch_india_vix()
+    vix_val = fetch_india_vix()
+    pcr = round(total_put_oi / total_call_oi, 2) if total_call_oi > 0 else 0.78
 
     result = {
         "spot": spot,
-        "atm": atm,
-        "active_expiry": active_exp,
+        "atm": atm_strike,
+        "active_expiry": active_expiry,
+        "all_expiries": all_expiries,
         "chain": chain,
         "pcr": pcr,
-        "india_vix": vix,
-        "max_pain": atm - 50
+        "max_pain": atm_strike - 50,
+        "india_vix": vix_val,
+        "greeks": {
+            "atm_strike": atm_strike,
+            "call_delta": 0.52,
+            "put_delta": -0.48,
+            "call_theta": -14.2,
+            "ce_pts_65": 33.8,
+            "pe_pts_65": 31.2
+        }
     }
     CACHE_STORE["market_data"] = result
     CACHE_STORE["market_time"] = now
     return result
 
+# ==================== QUANTUM OI STREAM REST API ====================
 @app.get("/api/oi/quantum-stream")
-def get_quantum_stream():
+def get_quantum_oi_stream():
     now = time.time()
     if CACHE_STORE["stream_data"] and (now - CACHE_STORE["stream_time"]) < 2.5:
         return CACHE_STORE["stream_data"]
@@ -264,7 +330,6 @@ def get_quantum_stream():
     sl_hits = sum(1 for t in DAILY_SIGNAL_LOG if "SL HIT" in t["result"])
     win_rate = round((target_hits / len(DAILY_SIGNAL_LOG)) * 100)
 
-    # 3 Niyam Signal Logic
     alert_popup = None
     if pcr <= 0.85:
         verdict = "🩸 BEARISH PRESSURE: Sellers Dominating"
@@ -274,9 +339,9 @@ def get_quantum_stream():
             "title": "🚨 3 NIYAM PE ENTRY TRIGGERED!",
             "time": ist_time_str,
             "signal": f"BUY {atm} PE",
-            "entry": 145.0,
-            "sl": 125.0,
-            "target": 185.0,
+            "entry": 195.0,
+            "sl": 175.0,
+            "target": 235.0,
             "reason": f"Spot < 23850 + PCR {pcr} < 0.80 + 1:2 RR"
         }
     else:
@@ -308,7 +373,7 @@ def get_quantum_stream():
     CACHE_STORE["stream_time"] = now
     return res_data
 
-# ==================== PAPER TRADING EXECUTION (65 QTY / LOT) ====================
+# ==================== PAPER TRADING REST APIS ====================
 @app.get("/api/paper/state")
 def get_paper_state():
     total_unrealized = sum(p.get("pnl", 0) for p in PAPER_STATE["positions"])
@@ -393,13 +458,254 @@ def reset_funds():
     PAPER_STATE["order_history"] = []
     return JSONResponse({"status": "success", "message": "Funds Reset to ₹1,00,000!"})
 
-# ==================== MASTER ANGEL ONE MOBILE UI HTML ====================
+# ==================== PAGE 1: PRO TRADINGVIEW TERMINAL ====================
+TERMINAL_HTML = r"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Hari Master Pro Terminal - Max Pain & Greeks Live</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background: #080b11; color: #d1d4dc; font-family: -apple-system, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        .header-bar { height: 44px; background: #0e131f; border-bottom: 1px solid #1a2234; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; }
+        .brand { font-size: 14px; font-weight: 900; color: #38bdf8; }
+        .spot-badge { font-weight: 800; color: #00ff88; background: #062319; border: 1px solid #00ff88; padding: 3px 10px; border-radius: 4px; font-size: 12px; }
+        .btn-nav { padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: 800; text-decoration: none; display: inline-flex; }
+        .btn-nav-oi { background: #04251f; border: 1.5px solid #00ff88; color: #00ff88; }
+        .btn-nav-paper { background: #172554; border: 1.5px solid #38bdf8; color: #38bdf8; margin-left:6px; }
+        .workspace { flex: 1; display: flex; width: 100%; height: calc(100vh - 44px); }
+        .chain-scroll { flex: 1; overflow-y: auto; padding: 10px; }
+        table { width: 100%; border-collapse: collapse; font-size: 12px; text-align: center; }
+        th { background: #161e2e; padding: 8px 4px; color: #94a3b8; position: sticky; top: 0; }
+        td { padding: 8px 4px; border-bottom: 1px solid #141b2b; }
+        .atm-row { background: rgba(56, 189, 248, 0.15); font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="header-bar">
+        <div class="brand"><span>📈 HARI MASTER TERMINAL (PRO)</span></div>
+        <div class="spot-badge" id="spotBadge">NIFTY: 23,851.40</div>
+        <div>
+            <a href="/oi-analytics" class="btn-nav btn-nav-oi">⚡ QUANTUM RADAR</a>
+            <a href="/paper-trading" class="btn-nav btn-nav-paper">📱 ANGEL PAPER APP</a>
+        </div>
+    </div>
+    <div class="workspace">
+        <div class="chain-scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th style="color:#00ff88;">CE OI</th>
+                        <th style="color:#00ff88;">CE LTP</th>
+                        <th>STRIKE</th>
+                        <th style="color:#ff2255;">PE LTP</th>
+                        <th style="color:#ff2255;">PE OI</th>
+                    </tr>
+                </thead>
+                <tbody id="chain_body"></tbody>
+            </table>
+        </div>
+    </div>
+    <script>
+        async function fetchTerminal() {
+            try {
+                let res = await fetch('/api/market_data');
+                let d = await res.json();
+                document.getElementById('spotBadge').innerText = `NIFTY: ₹ ${d.spot.toFixed(2)}`;
+                let html = '';
+                d.chain.forEach(r => {
+                    let atmCls = r.is_atm ? 'atm-row' : '';
+                    html += `<tr class="${atmCls}">
+                        <td style="color:#00ff88; font-weight:700;">${r.oi_ce_str}</td>
+                        <td style="color:#38bdf8; font-weight:800;">₹ ${r.ltp_ce.toFixed(2)}</td>
+                        <td style="font-weight:bold; background:#161e2e; color:#fff;">${r.strike}</td>
+                        <td style="color:#ff2255; font-weight:800;">₹ ${r.ltp_pe.toFixed(2)}</td>
+                        <td style="color:#ff2255; font-weight:700;">${r.oi_pe_str}</td>
+                    </tr>`;
+                });
+                document.getElementById('chain_body').innerHTML = html;
+            } catch(e) {}
+        }
+        fetchTerminal();
+        setInterval(fetchTerminal, 4000);
+    </script>
+</body>
+</html>
+"""
+
+# ==================== PAGE 2: QUANTUM OI RADAR (WITH LIVE CONNECTING WIRES) ====================
+OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
+<html lang="gu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hari Master Quantum OI Radar</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Gujarati:wght@500;700;800;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-deep: #05070a; --green-glow: #00ff88; --red-glow: #ff2255;
+            --cyan-glow: #00f0ff; --gold-glow: #fbbf24; --purple-glow: #c084fc;
+            --text-dim: #94a3b8;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Noto Sans Gujarati', monospace, sans-serif; }
+        body { background: var(--bg-deep); color: #fff; min-height: 100vh; display: flex; flex-direction: column; overflow-x: hidden; }
+
+        .cyber-header { height: 38px; background: #090e17; border-bottom: 1.5px solid #142033; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; flex-shrink: 0; }
+        .header-title { font-size: 13.5px; font-weight: 900; color: var(--cyan-glow); display: flex; align-items: center; gap: 8px; }
+        .btn-nav-link { background: #101c2e; border: 1.3px solid var(--cyan-glow); color: var(--cyan-glow); padding: 3px 10px; border-radius: 4px; font-size: 11px; text-decoration: none; font-weight: 800; }
+
+        .daily-tracker-bar { background: linear-gradient(90deg, #0d1e33, #09201a); border-bottom: 1px solid #1e3a5f; padding: 6px 14px; display: flex; align-items: center; justify-content: space-between; font-size: 11px; font-weight: 800; }
+        .signal-strip { height: 46px; background: #080d17; border-bottom: 1px solid #142033; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; flex-shrink: 0; }
+        .verdict-tag { font-size: 13px; font-weight: 900; }
+
+        .stream-workspace { flex: 1; display: flex; width: 100%; min-height: calc(100vh - 165px); position: relative; }
+        .matrix-canvas-box { flex: 1; position: relative; background: #040609; overflow: hidden; }
+        #streamCanvas { width: 100%; height: 100%; display: block; }
+
+        .strike-nodes-col { width: 440px; max-width: 49%; background: #080d16; border-left: 1.5px solid #142033; display: flex; flex-direction: column; justify-content: space-between; padding: 4px 8px; }
+        .strike-group-container { flex: 1; display: flex; flex-direction: column; justify-content: space-around; gap: 2px; }
+        .strike-card-node { background: #0d1522; border: 1.2px solid #1f2f45; border-radius: 5px; padding: 4px 8px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+        .node-call { border-left: 4px solid var(--green-glow); }
+        .node-put { border-left: 4px solid var(--red-glow); }
+
+        .spot-axis-divider { height: 25px; background: #ffffff; border-radius: 4px; color: #000; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; font-weight: 900; font-size: 12px; margin: 3px 0; }
+
+        .confidence-deck { background: #070d18; border-top: 1.5px solid #1a2a44; padding: 6px 12px; display: flex; flex-direction: column; gap: 5px; }
+    </style>
+</head>
+<body>
+    <div class="cyber-header">
+        <div class="header-title">⚡ HARI MASTER QUANTUM OI RADAR</div>
+        <div>
+            <a href="/" class="btn-nav-link">📈 CHARTS</a>
+            <a href="/paper-trading" class="btn-nav-link" style="border-color:#38bdf8; color:#38bdf8;">📱 PAPER APP</a>
+        </div>
+    </div>
+
+    <div class="daily-tracker-bar">
+        <span style="color:#38bdf8;">📊 DAILY TRADE TRACKER: <b id="trkSummary">3 Trades (2 Target Hit 🎯, 1 SL Hit 🛑)</b></span>
+        <span style="color:var(--green-glow);">WIN RATE: <b id="trkWinRate">67%</b> | NET: <b id="trkNetPts">+62 pts</b></span>
+    </div>
+
+    <div class="signal-strip">
+        <div>
+            <div style="font-size:8.5px; color:var(--text-dim);">3 NIYAM LIVE RULE:</div>
+            <div class="verdict-tag" id="verdictText" style="color:var(--green-glow);">SCANNING...</div>
+        </div>
+        <div style="text-align:right;">
+            <div style="font-size:8.5px; color:var(--text-dim);">ACTION (1:2 RR):</div>
+            <div style="font-size:11px; font-weight:900; color:var(--cyan-glow);" id="actionText">CALCULATING...</div>
+        </div>
+    </div>
+
+    <div class="stream-workspace">
+        <div class="matrix-canvas-box" id="canvasContainer"><canvas id="streamCanvas"></canvas></div>
+        <div class="strike-nodes-col">
+            <div style="font-size:9.5px; font-weight:bold; color:var(--green-glow);">▲ CALL RESISTANCE (CE)</div>
+            <div id="callStrikesContainer" class="strike-group-container"></div>
+            <div class="spot-axis-divider">
+                <span>SPOT AXIS</span>
+                <span id="spotCenterVal">₹ 23,851.40</span>
+            </div>
+            <div style="font-size:9.5px; font-weight:bold; color:var(--red-glow);">▼ PUT SUPPORT (PE)</div>
+            <div id="putStrikesContainer" class="strike-group-container"></div>
+        </div>
+    </div>
+
+    <div class="confidence-deck">
+        <div style="font-size:11px; color:#38bdf8; font-weight:800;" id="nextStepText">💡 NEXT STEP: કેલ્ક્યુલેટિંગ...</div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('streamCanvas');
+        const container = document.getElementById('canvasContainer');
+        const ctx = canvas.getContext('2d');
+        let streamData = null;
+
+        function resize() {
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+        }
+        window.addEventListener('resize', resize);
+
+        function drawLines() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            let startX = 0;
+            let startY = canvas.height / 2;
+            let endX = canvas.width;
+
+            // Draw Call Curves
+            for (let i = 0; i < 5; i++) {
+                let targetY = (canvas.height / 2) - 30 - (i * 25);
+                ctx.beginPath();
+                ctx.strokeStyle = "rgba(0, 255, 136, 0.6)";
+                ctx.lineWidth = 1.5;
+                ctx.moveTo(startX, startY);
+                ctx.bezierCurveTo(canvas.width * 0.4, startY - 20, canvas.width * 0.7, targetY, endX, targetY);
+                ctx.stroke();
+            }
+
+            // Draw Put Curves
+            for (let i = 0; i < 5; i++) {
+                let targetY = (canvas.height / 2) + 30 + (i * 25);
+                ctx.beginPath();
+                ctx.strokeStyle = "rgba(255, 34, 85, 0.6)";
+                ctx.lineWidth = 1.5;
+                ctx.moveTo(startX, startY);
+                ctx.bezierCurveTo(canvas.width * 0.4, startY + 20, canvas.width * 0.7, targetY, endX, targetY);
+                ctx.stroke();
+            }
+            requestAnimationFrame(drawLines);
+        }
+
+        async function fetchStreamData() {
+            try {
+                let res = await fetch('/api/oi/quantum-stream');
+                streamData = await res.json();
+
+                document.getElementById('verdictText').innerText = streamData.verdict;
+                document.getElementById('verdictText').style.color = streamData.color;
+                document.getElementById('actionText').innerText = streamData.action;
+                document.getElementById('spotCenterVal').innerText = `₹ ${streamData.spot.toFixed(2)}`;
+                document.getElementById('nextStepText').innerText = `💡 NEXT STEP: ${streamData.next_step}`;
+
+                let cHtml = '';
+                streamData.calls.slice(0, 5).forEach((c) => {
+                    cHtml += `<div class="strike-card-node node-call">
+                        <span><b>${c.strike} CE</b> <small style="color:#38bdf8;">₹${c.ltp.toFixed(2)}</small></span>
+                        <span style="color:#00ff88; font-weight:800;">${c.oi_str}</span>
+                    </div>`;
+                });
+                document.getElementById('callStrikesContainer').innerHTML = cHtml;
+
+                let pHtml = '';
+                streamData.puts.slice(0, 5).forEach((p) => {
+                    pHtml += `<div class="strike-card-node node-put">
+                        <span><b>${p.strike} PE</b> <small style="color:#ff2255;">₹${p.ltp.toFixed(2)}</small></span>
+                        <span style="color:#ff2255; font-weight:800;">${p.oi_str}</span>
+                    </div>`;
+                });
+                document.getElementById('putStrikesContainer').innerHTML = pHtml;
+            } catch(e) {}
+        }
+
+        resize();
+        drawLines();
+        fetchStreamData();
+        setInterval(fetchStreamData, 4000);
+    </script>
+</body>
+</html>
+"""
+
+# ==================== PAGE 3: ANGEL ONE MOBILE APP PAPER TRADING ====================
 ANGEL_APP_HTML = r"""<!DOCTYPE html>
 <html lang="gu">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Angel Trading Pro - Mobile Experience</title>
+    <title>Angel Trading Pro - Mobile Edition</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -410,7 +716,6 @@ ANGEL_APP_HTML = r"""<!DOCTYPE html>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
         body { background: var(--dark-bg); color: var(--text-main); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
 
-        /* HEADER */
         .app-header { height: 48px; background: #0f131c; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; padding: 0 14px; flex-shrink: 0; }
         .avatar-circle { width: 28px; height: 28px; border-radius: 50%; background: var(--angel-blue); color: #fff; font-size: 11px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
 
@@ -418,17 +723,12 @@ ANGEL_APP_HTML = r"""<!DOCTYPE html>
         .page-view { display: none; width: 100%; height: 100%; overflow-y: auto; padding-bottom: 65px; }
         .page-view.active-page { display: block; }
 
-        /* BOTTOM APP NAVIGATION */
         .bottom-nav { height: 56px; background: #0d111a; border-top: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-around; position: fixed; bottom: 0; left: 0; width: 100%; z-index: 100; }
         .nav-item { display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text-dim); font-size: 10px; font-weight: 600; text-decoration: none; cursor: pointer; width: 25%; height: 100%; gap: 3px; }
-        .nav-item svg { width: 19px; height: 19px; fill: currentColor; }
         .nav-item.active { color: var(--tab-active); }
 
-        /* LIST ITEM */
         .strike-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border-color); background: var(--card-bg); cursor: pointer; }
-        .strike-row:active { background: #1a2233; }
 
-        /* MODAL 1: STOCK DETAILS / DEPTH SHEET */
         .depth-sheet {
             position: fixed; bottom: -100%; left: 0; width: 100%; background: #121824;
             border-top: 2px solid var(--tab-active); border-radius: 16px 16px 0 0; padding: 16px;
@@ -437,31 +737,17 @@ ANGEL_APP_HTML = r"""<!DOCTYPE html>
         .depth-sheet.open { bottom: 0; }
         .backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.65); display: none; z-index: 150; }
 
-        .depth-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; background: #0c1018; padding: 8px; border-radius: 8px; margin: 10px 0; font-size: 11px; text-align: center; }
-        .depth-table { width: 100%; border-collapse: collapse; font-size: 11px; margin: 10px 0; text-align: center; }
-        .depth-table td { padding: 4px; }
-
-        /* MODAL 2: ANGEL ONE ORDER PAD */
         .orderpad-sheet {
             position: fixed; bottom: -100%; left: 0; width: 100%; background: #131722;
             border-top: 2px solid var(--green); border-radius: 16px 16px 0 0; padding: 16px;
-            z-index: 300; transition: bottom 0.25s ease; box-shadow: 0 -8px 35px rgba(0,0,0,0.9);
+            z-index: 300; transition: bottom 0.25s ease;
         }
         .orderpad-sheet.open { bottom: 0; }
-
-        .tab-pill-box { display: flex; background: #0c1018; border-radius: 6px; padding: 3px; gap: 4px; margin: 10px 0; }
-        .tab-pill { flex: 1; text-align: center; padding: 8px; font-size: 11.5px; font-weight: 800; border-radius: 5px; cursor: pointer; color: var(--text-dim); }
-        .tab-pill.active { background: #1a2538; color: #38bdf8; }
-
-        .price-stepper { display: flex; align-items: center; background: #1a202c; border: 1px solid #2d3748; border-radius: 6px; overflow: hidden; margin-top: 4px; }
-        .stepper-btn { width: 38px; height: 38px; background: #232c3d; border: none; color: #38bdf8; font-size: 18px; font-weight: 800; cursor: pointer; }
-        .stepper-input { flex: 1; background: transparent; border: none; color: #fff; text-align: center; font-size: 14px; font-weight: 800; outline: none; }
 
         .btn-order-place { width: 100%; background: var(--green); color: #fff; padding: 13px; border: none; border-radius: 8px; font-weight: 900; font-size: 14px; cursor: pointer; margin-top: 14px; }
     </style>
 </head>
 <body>
-
     <div class="app-header">
         <div style="display:flex; align-items:center; gap:8px;">
             <div class="avatar-circle">M</div>
@@ -477,7 +763,6 @@ ANGEL_APP_HTML = r"""<!DOCTYPE html>
     </div>
 
     <div class="app-body">
-        <!-- WATCHLIST -->
         <div id="pageWatchlist" class="page-view active-page">
             <div style="padding:10px 14px 4px; font-size:11px; font-weight:800; color:var(--text-dim); display:flex; justify-content:space-between;">
                 <span>NIFTY OPTIONS (1 LOT = 65 QTY)</span>
@@ -485,177 +770,62 @@ ANGEL_APP_HTML = r"""<!DOCTYPE html>
             </div>
             <div id="watchlistContainer"></div>
         </div>
-
-        <!-- POSITIONS -->
         <div id="pagePositions" class="page-view">
-            <div style="background:linear-gradient(135deg, #172554, #1e1b4b); border:1px solid #2563eb; border-radius:10px; padding:14px; margin:10px 12px; display:flex; justify-content:space-between; align-items:center;">
-                <div>
-                    <div style="font-size:11px; color:#93c5fd;">AVAILABLE MARGIN</div>
-                    <div style="font-size:20px; font-weight:900;" id="dispAvailFunds">₹ 1,00,000.00</div>
-                </div>
-                <div style="text-align:right;">
-                    <div style="font-size:11px; color:#93c5fd;">NET P&L</div>
-                    <div style="font-size:18px; font-weight:900;" id="dispNetPnl">+₹ 0.00</div>
-                    <button onclick="resetDemoFunds()" style="background:#2563eb; border:none; color:#fff; padding:3px 8px; border-radius:4px; font-size:10px; margin-top:4px; cursor:pointer;">RESET ₹1L</button>
-                </div>
+            <div style="background:linear-gradient(135deg, #172554, #1e1b4b); padding:14px; margin:10px; border-radius:8px; display:flex; justify-content:space-between;">
+                <div><span>FUNDS:</span><h3 id="dispAvailFunds">₹ 1,00,000.00</h3></div>
+                <div style="text-align:right;"><span>P&L:</span><h3 id="dispNetPnl">₹ 0.00</h3></div>
             </div>
-            <div style="padding:4px 14px; font-size:12px; font-weight:800; color:var(--text-dim);">ACTIVE POSITIONS (<span id="posCountTxt">0</span>)</div>
             <div id="positionsContainer"></div>
         </div>
-
-        <!-- ORDERS -->
         <div id="pageOrders" class="page-view">
-            <div style="padding:12px 14px; font-size:13px; font-weight:800; border-bottom:1px solid var(--border-color);">ORDER BOOK</div>
             <div id="ordersContainer"></div>
         </div>
-
-        <!-- TRACKER -->
-        <div id="pageTracker" class="page-view">
-            <div style="padding:12px 14px; font-size:13px; font-weight:800; border-bottom:1px solid var(--border-color); color:#38bdf8;">
-                📊 3 NIYAM STRATEGY TRADE TRACKER
-            </div>
-            <div id="tradeTrackerList" style="padding:10px;"></div>
-        </div>
     </div>
 
-    <!-- BACKDROP -->
     <div class="backdrop" id="sheetBackdrop" onclick="closeAllSheets()"></div>
 
-    <!-- MODAL 1: EXACT STOCK DETAILS & DEPTH (SCREENSHOT 2) -->
+    <!-- DEPTH SHEET (SCREENSHOT 2) -->
     <div class="depth-sheet" id="depthSheet">
         <div style="display:flex; justify-content:space-between; align-items:center;">
-            <div>
-                <div style="font-size:15px; font-weight:900;" id="dSymTitle">NIFTY 23900 CE</div>
-                <div style="font-size:10.5px; color:var(--text-dim);" id="dExpSub">09-Nov-26 • NSE FO</div>
-            </div>
-            <div style="text-align:right;">
-                <div style="font-size:16px; font-weight:900; color:var(--green);" id="dLtpVal">₹146.85 ▲</div>
-                <div style="font-size:10.5px; color:var(--green);">+35.50 (+31.88%)</div>
-            </div>
+            <div><b id="dSymTitle">NIFTY 23900 CE</b><br><small style="color:var(--text-dim);">NSE FO</small></div>
+            <div style="color:var(--green); font-size:16px; font-weight:bold;" id="dLtpVal">₹146.85</div>
         </div>
-
-        <!-- Open / High / Low / Prev. Close Grid -->
-        <div class="depth-grid">
-            <div><span style="color:var(--text-dim);">Open</span><br><b id="dOpen">91.95</b></div>
-            <div><span style="color:var(--text-dim);">High</span><br><b id="dHigh">212.45</b></div>
-            <div><span style="color:var(--text-dim);">Low</span><br><b id="dLow">79.45</b></div>
-            <div><span style="color:var(--text-dim);">Prev. Close</span><br><b id="dClose">111.35</b></div>
-        </div>
-
-        <!-- 5 Market Depth Table -->
-        <table class="depth-table">
-            <thead>
-                <tr style="color:var(--text-dim);">
-                    <th>Qty</th><th>Buy Price</th><th>Sell Price</th><th>Qty</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr><td>650</td><td style="color:#38bdf8;">₹145.05</td><td style="color:#f23645;">₹145.45</td><td>520</td></tr>
-                <tr><td>1495</td><td style="color:#38bdf8;">₹145.00</td><td style="color:#f23645;">₹145.50</td><td>2210</td></tr>
-                <tr><td>1690</td><td style="color:#38bdf8;">₹144.95</td><td style="color:#f23645;">₹145.55</td><td>1170</td></tr>
-            </tbody>
-        </table>
-
-        <!-- BUY / SELL BUTTONS -->
-        <div style="display:flex; gap:10px; margin-top:8px;">
-            <button onclick="openOrderPad('BUY')" style="flex:1; background:var(--green); color:#fff; padding:12px; border:none; border-radius:8px; font-weight:900; font-size:14px; cursor:pointer;">BUY</button>
-            <button onclick="openOrderPad('SELL')" style="flex:1; background:var(--red); color:#fff; padding:12px; border:none; border-radius:8px; font-weight:900; font-size:14px; cursor:pointer;">SELL</button>
+        <div style="display:flex; gap:10px; margin-top:14px;">
+            <button onclick="openOrderPad('BUY')" style="flex:1; background:var(--green); color:#fff; padding:12px; border:none; border-radius:8px; font-weight:bold; cursor:pointer;">BUY</button>
+            <button onclick="openOrderPad('SELL')" style="flex:1; background:var(--red); color:#fff; padding:12px; border:none; border-radius:8px; font-weight:bold; cursor:pointer;">SELL</button>
         </div>
     </div>
 
-    <!-- MODAL 2: EXACT ANGEL ONE ORDER PAD (SCREENSHOT 1) -->
+    <!-- ORDER PAD (SCREENSHOT 1) -->
     <div class="orderpad-sheet" id="orderPadSheet">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-            <div>
-                <div style="font-size:14px; font-weight:900;" id="padSymTitle">NIFTY 23900 CE</div>
-                <div style="font-size:10px; color:var(--text-dim);">NSE FO</div>
-            </div>
-            <div style="font-size:15px; font-weight:900; color:var(--green);" id="padLtpVal">₹146.85</div>
+        <b id="padSymTitle">NIFTY 23900 CE</b>
+        <div style="margin:10px 0;">
+            <label style="font-size:11px; color:var(--text-dim);">Lots (1 Lot = 65 Qty)</label>
+            <input type="number" id="lotInput" value="1" min="1" oninput="calcMargin()" style="width:100%; padding:8px; background:#1a202c; color:#fff; border:1px solid #334155; border-radius:6px; font-weight:bold;">
         </div>
-
-        <!-- Product Type Pill -->
-        <div class="tab-pill-box">
-            <div class="tab-pill" id="pillCarry" onclick="selectProduct('CARRY FORWARD')">CARRY FORWARD</div>
-            <div class="tab-pill active" id="pillIntra" onclick="selectProduct('INTRADAY')">INTRADAY Buy 1x</div>
+        <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:12px;">
+            <span>Margin Required:</span>
+            <b id="dispMarginReq" style="color:var(--green);">₹ 9,545.25</b>
         </div>
-
-        <!-- Lots Input -->
-        <div style="margin-top:10px;">
-            <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-dim);">
-                <span>No. of Lots</span>
-                <span>1 Lot Size = 65 ⓘ</span>
-            </div>
-            <div style="margin-top:4px;">
-                <input type="number" id="lotInput" value="1" min="1" oninput="calcMargin()" style="width:100%; background:#1a202c; border:1px solid #2d3748; color:#fff; padding:10px; border-radius:6px; font-size:14px; font-weight:800; outline:none;">
-            </div>
-        </div>
-
-        <!-- Limit Price Stepper & Type -->
-        <div style="display:flex; gap:10px; margin-top:12px; align-items:center;">
-            <div style="flex:1.3;">
-                <div style="font-size:11px; color:var(--text-dim);">Limit Price</div>
-                <div class="price-stepper">
-                    <button class="stepper-btn" onclick="stepPrice(-0.05)">-</button>
-                    <input type="number" step="0.05" id="limitPriceInput" oninput="calcMargin()" class="stepper-input" value="145.30">
-                    <button class="stepper-btn" onclick="stepPrice(0.05)">+</button>
-                </div>
-            </div>
-            <div style="flex:1;">
-                <div style="font-size:11px; color:var(--text-dim);">&nbsp;</div>
-                <div class="tab-pill-box" style="margin:0;">
-                    <div class="tab-pill active" id="pillLimit" onclick="selectType('LIMIT')">LIMIT</div>
-                    <div class="tab-pill" id="pillMarket" onclick="selectType('MARKET')">MARKET</div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Margin Info Strip -->
-        <div style="display:flex; justify-content:space-between; margin-top:14px; font-size:12px;">
-            <div>
-                <span style="color:var(--text-dim);">Margin Required (Approx)</span><br>
-                <b id="dispMarginReq" style="color:#fff; font-size:14px;">₹ 9,444.50</b>
-            </div>
-            <div style="text-align:right;">
-                <span style="color:var(--text-dim);">Available Margin</span><br>
-                <b id="dispAvailMargin" style="color:#38bdf8; font-size:14px;">₹ 1,00,000.00</b>
-            </div>
-        </div>
-
-        <button class="btn-order-place" id="placeOrderBtn" onclick="confirmExecuteOrder()">PLACE BUY ORDER</button>
+        <button class="btn-order-place" onclick="executeOrder()">PLACE BUY ORDER</button>
     </div>
 
-    <!-- BOTTOM APP NAVIGATION -->
     <div class="bottom-nav">
-        <div class="nav-item active" onclick="switchNav('Watchlist', this)">
-            <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
-            <span>Watchlist</span>
-        </div>
-        <div class="nav-item" onclick="switchNav('Positions', this)">
-            <svg viewBox="0 0 24 24"><path d="M21 18v1c0 1.1-.9 2-2 2H5c-1.11 0-2-.9-2-2V5c0-1.1.89-2 2-2h14c1.1 0 2 .9 2 2v1h-9c-1.11 0-2 .9-2 2v8c0 1.1.89 2 2 2h9zm-9-2h10V8H12v8z"/></svg>
-            <span>Positions</span>
-        </div>
-        <div class="nav-item" onclick="switchNav('Orders', this)">
-            <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
-            <span>Orders</span>
-        </div>
-        <div class="nav-item" onclick="switchNav('Tracker', this)">
-            <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
-            <span>Tracker</span>
-        </div>
+        <div class="nav-item active" onclick="switchNav('Watchlist', this)">Watchlist</div>
+        <div class="nav-item" onclick="switchNav('Positions', this)">Positions</div>
+        <div class="nav-item" onclick="switchNav('Orders', this)">Orders</div>
     </div>
 
     <script>
         let curItem = null;
-        let selectedProduct = "INTRADAY";
-        let selectedType = "LIMIT";
-        let selectedSide = "BUY";
+        let curSide = "BUY";
 
         function switchNav(id, el) {
             document.querySelectorAll('.page-view').forEach(p => p.classList.remove('active-page'));
             document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
             document.getElementById(`page${id}`).classList.add('active-page');
             el.classList.add('active');
-            if (id === 'Positions' || id === 'Orders' || id === 'Tracker') syncPaperData();
+            if (id === 'Positions' || id === 'Orders') syncPaperData();
         }
 
         async function loadWatchlist() {
@@ -665,55 +835,31 @@ ANGEL_APP_HTML = r"""<!DOCTYPE html>
                 let html = '';
                 d.chain.forEach(s => {
                     html += `
-                    <div class="strike-row" onclick="openDepthSheet('${s.strike} CE', ${s.ltp_ce}, ${s.open_ce}, ${s.high_ce}, ${s.low_ce}, ${s.close_ce})">
-                        <div>
-                            <div style="font-weight:800; color:var(--green);">NIFTY ${s.strike} CE</div>
-                            <div style="font-size:10px; color:var(--text-dim);">${d.active_expiry} • OI: ${s.oi_ce_str} ${s.is_atm ? '• <b style="color:#38bdf8;">ATM</b>' : ''}</div>
-                        </div>
-                        <div style="text-align:right;">
-                            <div style="font-weight:900; color:var(--green);">₹ ${s.ltp_ce.toFixed(2)}</div>
-                            <div style="font-size:10px; color:var(--text-dim);">Tap for Details</div>
-                        </div>
+                    <div class="strike-row" onclick="openDepth('${s.strike} CE', ${s.ltp_ce})">
+                        <div><b>NIFTY ${s.strike} CE</b><br><small style="color:var(--text-dim);">OI: ${s.oi_ce_str}</small></div>
+                        <div style="color:var(--green); font-weight:bold;">₹ ${s.ltp_ce.toFixed(2)}</div>
                     </div>
-                    <div class="strike-row" onclick="openDepthSheet('${s.strike} PE', ${s.ltp_pe}, ${s.open_pe}, ${s.high_pe}, ${s.low_pe}, ${s.close_pe})">
-                        <div>
-                            <div style="font-weight:800; color:var(--red);">NIFTY ${s.strike} PE</div>
-                            <div style="font-size:10px; color:var(--text-dim);">${d.active_expiry} • OI: ${s.oi_pe_str} ${s.is_atm ? '• <b style="color:#38bdf8;">ATM</b>' : ''}</div>
-                        </div>
-                        <div style="text-align:right;">
-                            <div style="font-weight:900; color:var(--red);">₹ ${s.ltp_pe.toFixed(2)}</div>
-                            <div style="font-size:10px; color:var(--text-dim);">Tap for Details</div>
-                        </div>
+                    <div class="strike-row" onclick="openDepth('${s.strike} PE', ${s.ltp_pe})">
+                        <div><b>NIFTY ${s.strike} PE</b><br><small style="color:var(--text-dim);">OI: ${s.oi_pe_str}</small></div>
+                        <div style="color:var(--red); font-weight:bold;">₹ ${s.ltp_pe.toFixed(2)}</div>
                     </div>`;
                 });
                 document.getElementById('watchlistContainer').innerHTML = html;
             } catch(e) {}
         }
 
-        function openDepthSheet(sym, ltp, o, h, l, c) {
-            curItem = { sym: sym, ltp: ltp, open: o, high: h, low: l, close: c };
+        function openDepth(sym, ltp) {
+            curItem = { sym: sym, ltp: ltp };
             document.getElementById('dSymTitle').innerText = `NIFTY ${sym}`;
             document.getElementById('dLtpVal').innerText = `₹${ltp.toFixed(2)}`;
-            document.getElementById('dOpen').innerText = o.toFixed(2);
-            document.getElementById('dHigh').innerText = h.toFixed(2);
-            document.getElementById('dLow').innerText = l.toFixed(2);
-            document.getElementById('dClose').innerText = c.toFixed(2);
-
             document.getElementById('sheetBackdrop').style.display = 'block';
             document.getElementById('depthSheet').classList.add('open');
         }
 
         function openOrderPad(side) {
-            selectedSide = side;
+            curSide = side;
             document.getElementById('depthSheet').classList.remove('open');
             document.getElementById('padSymTitle').innerText = `NIFTY ${curItem.sym}`;
-            document.getElementById('padLtpVal').innerText = `₹${curItem.ltp.toFixed(2)}`;
-            document.getElementById('limitPriceInput').value = curItem.ltp.toFixed(2);
-            
-            let btn = document.getElementById('placeOrderBtn');
-            btn.innerText = `PLACE ${side} ORDER`;
-            btn.style.background = side === "BUY" ? "var(--green)" : "var(--red)";
-
             calcMargin();
             document.getElementById('orderPadSheet').classList.add('open');
         }
@@ -724,52 +870,18 @@ ANGEL_APP_HTML = r"""<!DOCTYPE html>
             document.getElementById('orderPadSheet').classList.remove('open');
         }
 
-        function selectProduct(p) {
-            selectedProduct = p;
-            document.getElementById('pillCarry').classList.toggle('active', p === 'CARRY FORWARD');
-            document.getElementById('pillIntra').classList.toggle('active', p === 'INTRADAY');
-        }
-
-        function selectType(t) {
-            selectedType = t;
-            document.getElementById('pillLimit').classList.toggle('active', t === 'LIMIT');
-            document.getElementById('pillMarket').classList.toggle('active', t === 'MARKET');
-            if (t === 'MARKET') {
-                document.getElementById('limitPriceInput').value = curItem.ltp.toFixed(2);
-            }
-            calcMargin();
-        }
-
-        function stepPrice(step) {
-            let cur = parseFloat(document.getElementById('limitPriceInput').value) || curItem.ltp;
-            cur = Math.max(0.05, cur + step);
-            document.getElementById('limitPriceInput').value = cur.toFixed(2);
-            calcMargin();
-        }
-
         function calcMargin() {
             let lots = parseInt(document.getElementById('lotInput').value) || 1;
-            let p = parseFloat(document.getElementById('limitPriceInput').value) || curItem.ltp;
-            let total = (lots * 65 * p).toFixed(2);
+            let total = (lots * 65 * curItem.ltp).toFixed(2);
             document.getElementById('dispMarginReq').innerText = `₹ ${parseFloat(total).toLocaleString()}`;
         }
 
-        async function confirmExecuteOrder() {
+        async function executeOrder() {
             let lots = parseInt(document.getElementById('lotInput').value) || 1;
-            let price = parseFloat(document.getElementById('limitPriceInput').value) || curItem.ltp;
-            let qty = lots * 65;
-
             let res = await fetch('/api/paper/order', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    symbol: curItem.sym,
-                    side: selectedSide,
-                    qty: qty,
-                    price: price,
-                    product: selectedProduct,
-                    type: selectedType
-                })
+                body: JSON.stringify({ symbol: curItem.sym, side: curSide, qty: lots * 65, price: curItem.ltp })
             });
             let d = await res.json();
             alert(d.message);
@@ -782,88 +894,26 @@ ANGEL_APP_HTML = r"""<!DOCTYPE html>
                 let res = await fetch('/api/paper/state');
                 let d = await res.json();
                 document.getElementById('dispAvailFunds').innerText = `₹ ${d.available_funds.toLocaleString()}`;
-                document.getElementById('dispAvailMargin').innerText = `₹ ${d.available_funds.toLocaleString()}`;
                 document.getElementById('dispNetPnl').innerText = `${d.total_pnl >= 0 ? '+' : ''}₹ ${d.total_pnl.toFixed(2)}`;
-                document.getElementById('dispNetPnl').style.color = d.total_pnl >= 0 ? "var(--green)" : "var(--red)";
-                document.getElementById('posCountTxt').innerText = d.positions.length;
-
                 let pHtml = '';
-                if (d.positions.length === 0) {
-                    pHtml = '<div style="text-align:center; padding:30px; color:var(--text-dim); font-size:12px;">કોઈ active position નથી. Watchlist માંથી ટ્રેડ કરો!</div>';
-                } else {
-                    d.positions.forEach(p => {
-                        pHtml += `
-                        <div style="background:var(--card-bg); border:1px solid var(--border-color); border-radius:8px; padding:12px; margin:8px 12px; display:flex; justify-content:space-between; align-items:center;">
-                            <div>
-                                <div style="font-weight:900; font-size:13px;">${p.symbol} <small style="color:#38bdf8;">(${p.product})</small></div>
-                                <div style="font-size:10.5px; color:var(--text-dim);">Qty: ${p.qty} (1 Lot = 65) | Avg: ₹${p.entry_price.toFixed(2)}</div>
-                            </div>
-                            <div style="text-align:right;">
-                                <div style="font-size:14px; font-weight:900; color:${p.pnl >= 0 ? 'var(--green)' : 'var(--red)'};">${p.pnl >= 0 ? '+' : ''}₹ ${p.pnl.toFixed(2)}</div>
-                                <button onclick="exitPosition(${p.id})" style="background:#334155; color:#fff; border:none; padding:4px 8px; border-radius:4px; font-size:10.5px; cursor:pointer; margin-top:3px;">SQUARE OFF</button>
-                            </div>
-                        </div>`;
-                    });
-                }
-                document.getElementById('positionsContainer').innerHTML = pHtml;
-
-                let oHtml = '';
-                if (d.orders.length === 0) {
-                    oHtml = '<div style="text-align:center; padding:30px; color:var(--text-dim); font-size:12px;">હજી કોઈ order પ્લેસ નથી થયો.</div>';
-                } else {
-                    d.orders.forEach(o => {
-                        oHtml += `
-                        <div class="strike-row">
-                            <div>
-                                <div style="font-weight:800; font-size:12px;">${o.symbol} <span style="color:#38bdf8;">(${o.side})</span></div>
-                                <div style="font-size:10px; color:var(--text-dim);">${o.time} • Qty: ${o.qty} • Type: ${o.type}</div>
-                            </div>
-                            <div style="text-align:right; font-weight:900; font-size:12px; color:var(--green);">₹ ${o.price.toFixed(2)}</div>
-                        </div>`;
-                    });
-                }
-                document.getElementById('ordersContainer').innerHTML = oHtml;
-
-                // Tracker Log
-                let sRes = await fetch('/api/oi/quantum-stream');
-                let sData = await sRes.json();
-                if (sData.trade_tracker && sData.trade_tracker.log) {
-                    let tHtml = '';
-                    sData.trade_tracker.log.forEach(t => {
-                        let hitCol = t.result.includes("TARGET") ? "var(--green)" : "var(--red)";
-                        tHtml += `
-                        <div style="background:var(--card-bg); border:1px solid var(--border-color); border-radius:8px; padding:10px; margin-bottom:8px;">
-                            <div style="display:flex; justify-content:space-between; font-weight:800; font-size:12.5px;">
-                                <span>${t.time} • <b style="color:var(--tab-active);">${t.signal} ${t.strike}</b></span>
-                                <span style="color:${hitCol};">${t.result}</span>
-                            </div>
-                            <div style="font-size:11px; color:var(--text-dim); margin-top:4px;">
-                                Entry: ₹${t.entry} | SL: ₹${t.sl} | Target: ₹${t.target}
-                            </div>
-                            <div style="font-size:10.5px; color:#38bdf8; margin-top:2px;">
-                                Niyam: ${t.notes}
-                            </div>
-                        </div>`;
-                    });
-                    document.getElementById('tradeTrackerList').innerHTML = tHtml;
-                }
+                d.positions.forEach(p => {
+                    pHtml += `
+                    <div style="background:var(--card-bg); padding:10px; margin:8px; border-radius:6px; display:flex; justify-content:space-between; align-items:center;">
+                        <div><b>${p.symbol}</b><br><small>Qty: ${p.qty} @ ₹${p.entry_price.toFixed(2)}</small></div>
+                        <button onclick="closePos(${p.id})" style="background:#334155; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer;">EXIT</button>
+                    </div>`;
+                });
+                document.getElementById('positionsContainer').innerHTML = pHtml || '<div style="text-align:center; padding:20px; color:var(--text-dim);">No Active Positions</div>';
             } catch(e) {}
         }
 
-        async function exitPosition(id) {
+        async function closePos(id) {
             await fetch('/api/paper/close', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ pos_id: id })
             });
             syncPaperData();
-        }
-
-        async function resetDemoFunds() {
-            if (confirm("Demo Funds ફરી ₹1,00,000 કરવા છે?")) {
-                await fetch('/api/paper/reset', { method: 'POST' });
-                syncPaperData();
-            }
         }
 
         loadWatchlist();
@@ -875,7 +925,7 @@ ANGEL_APP_HTML = r"""<!DOCTYPE html>
 </html>
 """
 
-# ==================== ROUTE BINDINGS (3 ALL-IN-ONE PAGES) ====================
+# ==================== ROUTE BINDINGS ====================
 @app.get("/", response_class=HTMLResponse)
 def index():
     return TERMINAL_HTML
