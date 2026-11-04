@@ -6,6 +6,7 @@ import datetime
 import json
 import os
 import math
+import requests
 
 app = FastAPI()
 
@@ -23,6 +24,8 @@ try:
 except Exception as e:
     print("❌ Angel One Login Error:", e)
 
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AQ.Ab8RN6IwNb103ufTdRJgrSfooCFov431zHU9TP1hp0yWsoHekw")
+
 TF_MAP = {
     "1m": "ONE_MINUTE",
     "3m": "THREE_MINUTE",
@@ -38,7 +41,7 @@ if os.path.exists(json_path):
     try:
         with open(json_path, "r", encoding="utf-8") as f:
             INSTRUMENT_CACHE = json.load(f)
-            print(f"✅ Loaded {len(INSTRUMENT_CACHE)} instruments from nfo_instruments.json")
+            print(f"✅ Loaded {len(INSTRUMENT_CACHE)} instruments")
     except Exception as e:
         print("❌ Instrument load error:", e)
 
@@ -71,6 +74,14 @@ def save_persisted_baselines(base_map):
 
 BASELINE_OI_MAP = get_persisted_baselines()
 
+# ==================== PAPER TRADING IN-MEMORY STATE (65 QTY LOT) ====================
+PAPER_STATE = {
+    "capital": 100000.0,
+    "available_funds": 100000.0,
+    "positions": [],
+    "order_history": []
+}
+
 def parse_expiry_date(e_str):
     if not e_str:
         return None
@@ -96,7 +107,6 @@ def get_all_active_expiries():
                 norm_key = dt.strftime("%d%b%Y").upper()
                 if norm_key not in exp_map:
                     exp_map[norm_key] = dt
-    
     sorted_items = sorted(exp_map.items(), key=lambda x: x[1])
     return [k for k, _ in sorted_items]
 
@@ -181,6 +191,16 @@ def fetch_angel_market_data(tokens):
             print(f"❌ MarketData fetch error: {e}")
     return data_dict
 
+def fetch_india_vix():
+    vix = 14.5
+    try:
+        res = smartApi.ltpData("NSE", "INDIA VIX", "26001")
+        if res and isinstance(res, dict) and res.get("data") and res["data"].get("ltp"):
+            vix = float(res["data"]["ltp"])
+    except Exception:
+        pass
+    return vix
+
 def fetch_candle_data_for_token(token, interval_str, exchange="NFO"):
     ist_now = get_current_ist_time()
     to_date = ist_now.strftime("%Y-%m-%d 15:30")
@@ -215,7 +235,6 @@ def fetch_candle_data_for_token(token, interval_str, exchange="NFO"):
         return []
     return candles
 
-# ==================== MAX PAIN & BLACK-SCHOLES OPTION GREEKS ENGINE ====================
 def norm_cdf(x):
     return (1.0 + math.erf(x / math.sqrt(2.0))) / 2.0
 
@@ -258,8 +277,8 @@ def calculate_greeks_and_maxpain(spot, chain, expiry_str):
     theta_term2_call = -r * K * math.exp(-r * T) * norm_cdf(d2)
     call_theta = round((theta_term1 + theta_term2_call) / 365.0, 2)
 
-    ce_pts_50 = round(call_delta * 50, 1)
-    pe_pts_50 = round(abs(put_delta) * 50, 1)
+    ce_pts_65 = round(call_delta * 65, 1)
+    pe_pts_65 = round(abs(put_delta) * 65, 1)
 
     return {
         "max_pain": max_pain_strike,
@@ -268,8 +287,8 @@ def calculate_greeks_and_maxpain(spot, chain, expiry_str):
             "call_delta": call_delta,
             "put_delta": put_delta,
             "call_theta": call_theta,
-            "ce_pts_50": ce_pts_50,
-            "pe_pts_50": pe_pts_50,
+            "ce_pts_65": ce_pts_65,
+            "pe_pts_65": pe_pts_65,
             "days_left": days_to_expiry
         }
     }
@@ -297,7 +316,7 @@ def get_market_data(
             spot = float(spot_candles[-1]["close"])
     else:
         if spot <= 0:
-            spot = 23810.85
+            spot = 23795.00
         base_time = int(get_current_ist_time().timestamp()) - 3600 * 5
         cur = spot - 20.0
         spot_candles = []
@@ -361,6 +380,7 @@ def get_market_data(
         })
 
     pain_greeks_data = calculate_greeks_and_maxpain(spot, chain, active_expiry)
+    vix_val = fetch_india_vix()
 
     ce_token = token_map.get(active_ce, {}).get("CE", "")
     pe_token = token_map.get(active_pe, {}).get("PE", "")
@@ -374,7 +394,6 @@ def get_market_data(
     base_pe = pe_sel_data["ltp_pe"] if pe_sel_data["ltp_pe"] > 0 else 225.0
     last_c = spot_candles[-1]["close"]
 
-    # Guaranteed valid candles generator for option strikes
     if not ce_candles or len(ce_candles) < 2:
         ce_candles = []
         for idx, c in enumerate(spot_candles):
@@ -420,10 +439,11 @@ def get_market_data(
         "chain": chain,
         "pcr": pcr,
         "max_pain": pain_greeks_data["max_pain"],
-        "greeks": pain_greeks_data["greeks"]
+        "greeks": pain_greeks_data["greeks"],
+        "india_vix": vix_val
     }
 
-# ==================== ADVANCED ACCURATE RADAR ENGINE ====================
+# ==================== ADVANCED ACCURATE RADAR & TRIGGER ENGINE ====================
 @app.get("/api/oi/quantum-stream")
 def get_quantum_oi_stream():
     global BASELINE_OI_MAP
@@ -436,7 +456,7 @@ def get_quantum_oi_stream():
         pass
 
     if spot <= 0:
-        spot = 23810.85
+        spot = 23795.00
 
     atm = int(round(spot / 50.0) * 50)
     all_exp = get_all_active_expiries()
@@ -445,6 +465,7 @@ def get_quantum_oi_stream():
     strikes = [atm + (i * 50) for i in range(-8, 9)]
     token_map, tokens_to_fetch = get_tokens_by_expiry_and_strikes(active_exp, strikes)
     live_quotes = fetch_angel_market_data(tokens_to_fetch)
+    vix = fetch_india_vix()
 
     calls_data = []
     puts_data = []
@@ -534,36 +555,53 @@ def get_quantum_oi_stream():
     pcr_factor = max(0.0, min(1.0, pcr_factor))
     bull_power = round(pcr_factor * 100)
 
-    is_hunting = (main_sup and spot < (main_sup["strike"] - 5) and spot >= (main_sup["strike"] - 75) and max_put_add and max_put_add["chg"] > 0)
-    
-    alert_type = "NORMAL"
-    if is_hunting:
-        verdict = f"🎯 OPERATOR TRAP: {main_sup['strike']} SL Hunt -> Reversal"
-        color = "#00ff88"
-        action = f"ખરીદો {atm} CE (Discount Entry) | લક્ષ્ય: {main_res['strike']}"
-        next_step = f"હમણાં માર્કેટ {main_sup['strike']} નીચે સ્ટોપલોસ હંટ કરે છે. PCR {live_pcr} મજબૂત છે, પુટ ખરીદતા નહીં! ઉપર Rocket Reversal મારશે!"
-        news = f"⚡ CONFIDENCE ALERT: નિફ્ટી સ્પોટ ({spot}) એ {main_sup['strike']} નીચે ટ્રેપ રચ્યો છે! PCR {live_pcr} તેજીમાં છે! રીટેલર્સને પુટમાં ફસાવીને માર્કેટ અચાનક 23,{main_res['strike']%1000} તરફ રોકેટ ઉડાણ ભરશે! કૉલ હોલ્ડ રાખો!"
-        alert_type = "REVERSAL_BUY"
-    elif live_pcr >= 1.15 or bull_power >= 60:
-        verdict = f"🚀 STRONG UP-TREND: {bull_power}% Bulls In Control"
-        color = "#00ff88"
-        action = f"હોલ્ડ કરો {atm} CE / {max_put_add['strike'] if max_put_add else atm} CE | લક્ષ્ય: {main_res['strike']}"
-        next_step = f"લાઇવ અપ-ટ્રેન્ડ ચાલુ છે (PCR: {live_pcr}). માર્કેટ નીચે નહીં જાય, ધીરજ રાખો અને કૉલ હોલ્ડ કરો! પુટમાં પડશો નહીં."
-        news = f"🔥 FULL CONFIDENCE ALERT: PCR {live_pcr} સાથે બજારમાં મજબૂત તેજી ચાલુ છે! પુટ રાઇટર્સ સતત સપોર્ટ ઉપર લાવી રહ્યા છે. નિફ્ટી કોઈપણ નાની ડીપ મારે તો પણ ગભરાવાની જરૂર નથી, ટાર્ગેટ {main_res['strike']} તરફ જ જશે! કૉલમાં વિશ્વાસ રાખો!"
-        alert_type = "BULLISH_TREND"
-    elif live_pcr <= 0.85 and max_call_add and max_call_add["chg"] > 0:
+    if vix < 12.5:
+        vix_status = f"VIX {vix} (શાંત બજાર - Theta Decay થી સાચવો)"
+    elif vix <= 16.5:
+        vix_status = f"VIX {vix} (ઓપ્શન બાયિંગ માટે બેસ્ટ મોમેન્ટમ)"
+    else:
+        vix_status = f"VIX {vix} (હાઈ વોલેટિલિટી / મોટા ઝટકા - SL કડક રાખો)"
+
+    alert_popup = None
+    if live_pcr <= 0.85 and max_call_add and max_call_add["chg"] > 0 and spot < 23800:
         verdict = f"🩸 BEARISH PRESSURE: {100-bull_power}% Sellers Dominating"
         color = "#ff2255"
         action = f"ખરીદો {atm} PE | લક્ષ્ય: {main_sup['strike']}"
-        next_step = f"PCR {live_pcr} મંદીમાં છે. કૉલ રાઇટર્સ દબાવી રહ્યા છે. ઉછાળે પુટ બાય સાઇડ નજર રાખો."
-        news = f"⚠️ ડાઉન એલર્ટ: PCR {live_pcr} નીચે સરક્યો છે અને {max_call_add['strike']} CE પર નવો OI ઉમેરાયો છે! મોટા કૉલ સેલર્સ માર્કેટને દબાવી રહ્યા છે! પુટ સાઇડ ફોકસ રાખો!"
+        next_step = f"PCR {live_pcr} મંદીમાં છે. 23800 તૂટી ગયું છે. ઉછાળે પુટ બાય સાઇડ જ રહો."
+        news = f"⚠️ ડાઉન એલર્ટ: PCR {live_pcr} નીચે છે. India {vix_status}. 23800 CE પર મોટું સેલિંગ ચાલુ છે!"
         alert_type = "BEARISH_ALERT"
+        alert_popup = {
+            "title": "🚨 NEW ENTRY TRIGGERED!",
+            "time": ist_time_str,
+            "signal": f"BUY {atm} PE",
+            "entry": 197.0,
+            "sl": 175.0,
+            "target": 240.0,
+            "reason": f"23800 Breakdown + PCR {live_pcr} Bearish"
+        }
+    elif live_pcr >= 1.15 or bull_power >= 60:
+        verdict = f"🚀 STRONG UP-TREND: {bull_power}% Bulls In Control"
+        color = "#00ff88"
+        action = f"ખરીદો {atm} CE | લક્ષ્ય: {main_res['strike']}"
+        next_step = f"લાઈવ અપ-ટ્રેન્ડ ચાલુ છે (PCR: {live_pcr}). પુટમાં પડશો નહીં, ડીપ પર કૉલ બાય કરો."
+        news = f"🔥 Full Confidence Alert: PCR {live_pcr} તેજીમાં! India {vix_status}. માર્કેટ ટાર્ગેટ {main_res['strike']} તરફ જશે."
+        alert_type = "BULLISH_TREND"
+        alert_popup = {
+            "title": "🚀 BULLISH ENTRY TRIGGERED!",
+            "time": ist_time_str,
+            "signal": f"BUY {atm} CE",
+            "entry": 170.0,
+            "sl": 150.0,
+            "target": 215.0,
+            "reason": f"PCR {live_pcr} Bullish Confirmation"
+        }
     else:
         verdict = f"⚡ RANGEBOUND CONSOLIDATION ({main_sup['strike']} - {main_res['strike']})"
         color = "#fbbf24"
         action = f"બ્રેકઆઉટની રાહ જુઓ"
-        next_step = f"માર્કેટ {main_sup['strike']} અને {main_res['strike']} ની વચ્ચે અટવાયેલું છે. PCR: {live_pcr} ન્યુટ્રલ છે."
-        news = f"📢 લાઈવ સમાચાર: નિફ્ટી સ્પોટ {spot} પર ચાલે છે. નજીકનો સપોર્ટ {main_sup['strike']} PE ({main_sup['oi_str']}) અને રેઝિસ્ટન્સ {main_res['strike']} CE ({main_res['oi_str']}) છે."
+        next_step = f"માર્કેટ {main_sup['strike']} અને {main_res['strike']} ની વચ્ચે અટવાયેલું છે."
+        news = f"📢 લાઈવ માર્કેટ: નિફ્ટી ₹{spot} | PCR {live_pcr} | India {vix_status}."
+        alert_type = "NORMAL"
 
     return {
         "spot": spot,
@@ -581,17 +619,117 @@ def get_quantum_oi_stream():
         "pcr": live_pcr,
         "next_step": next_step,
         "news": news,
-        "alert_type": alert_type
+        "alert_type": alert_type,
+        "india_vix": vix,
+        "vix_status": vix_status,
+        "alert_popup": alert_popup
     }
 
-# ==================== LIVE GEMINI AI TRADING COPILOT ====================
+# ==================== PAPER TRADING REST APIS (65 QTY PER LOT) ====================
+@app.get("/api/paper/state")
+def get_paper_state():
+    spot_info = get_quantum_oi_stream()
+    total_unrealized_pnl = 0.0
+    for p in PAPER_STATE["positions"]:
+        diff_pts = (spot_info.get("spot", 23800) - 23800)
+        if "CE" in p["symbol"]:
+            p["ltp"] = round(max(1.0, p["entry_price"] + (diff_pts * 0.5)), 2)
+        else:
+            p["ltp"] = round(max(1.0, p["entry_price"] - (diff_pts * 0.5)), 2)
+        p["pnl"] = round((p["ltp"] - p["entry_price"]) * p["qty"], 2)
+        total_unrealized_pnl += p["pnl"]
+
+    total_realized = sum(o.get("pnl", 0.0) for o in PAPER_STATE["order_history"])
+    net_portfolio_value = round(PAPER_STATE["available_funds"] + total_unrealized_pnl + sum(p["entry_price"] * p["qty"] for p in PAPER_STATE["positions"]), 2)
+
+    return {
+        "capital": PAPER_STATE["capital"],
+        "available_funds": round(PAPER_STATE["available_funds"], 2),
+        "portfolio_value": net_portfolio_value,
+        "total_pnl": round(total_unrealized_pnl + total_realized, 2),
+        "unrealized_pnl": round(total_unrealized_pnl, 2),
+        "positions": PAPER_STATE["positions"],
+        "orders": PAPER_STATE["order_history"]
+    }
+
+@app.post("/api/paper/order")
+async def place_paper_order(request: Request):
+    try:
+        body = await request.json()
+        symbol = body.get("symbol", "").strip()
+        side = body.get("side", "BUY").upper()
+        qty = int(body.get("qty", 65))
+        price = float(body.get("price", 175.0))
+
+        total_cost = round(price * qty, 2)
+        if side == "BUY":
+            if PAPER_STATE["available_funds"] < total_cost:
+                return JSONResponse({"status": "error", "message": "Funds Insufficient! Balance check karo."})
+            PAPER_STATE["available_funds"] -= total_cost
+            new_pos = {
+                "id": len(PAPER_STATE["positions"]) + 1,
+                "symbol": symbol,
+                "qty": qty,
+                "entry_price": price,
+                "ltp": price,
+                "pnl": 0.0,
+                "time": get_current_ist_time().strftime("%I:%M:%S %p")
+            }
+            PAPER_STATE["positions"].append(new_pos)
+            PAPER_STATE["order_history"].append({
+                "time": new_pos["time"],
+                "symbol": symbol,
+                "side": "BUY",
+                "qty": qty,
+                "price": price,
+                "status": "EXECUTED",
+                "pnl": 0.0
+            })
+            return JSONResponse({"status": "success", "message": f"{symbol} Buy thai gayo ({qty} Qty) @ ₹{price}!"})
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)})
+
+@app.post("/api/paper/close")
+async def close_paper_position(request: Request):
+    try:
+        body = await request.json()
+        pos_id = body.get("pos_id")
+        target_pos = next((p for p in PAPER_STATE["positions"] if p["id"] == pos_id), None)
+        if target_pos:
+            PAPER_STATE["positions"].remove(target_pos)
+            exit_price = target_pos["ltp"]
+            pnl = round((exit_price - target_pos["entry_price"]) * target_pos["qty"], 2)
+            released_fund = round(target_pos["entry_price"] * target_pos["qty"] + pnl, 2)
+            PAPER_STATE["available_funds"] += released_fund
+            PAPER_STATE["order_history"].append({
+                "time": get_current_ist_time().strftime("%I:%M:%S %p"),
+                "symbol": target_pos["symbol"],
+                "side": "SELL (EXIT)",
+                "qty": target_pos["qty"],
+                "price": exit_price,
+                "status": "CLOSED",
+                "pnl": pnl
+            })
+            return JSONResponse({"status": "success", "message": f"{target_pos['symbol']} Square off thai gayo! P&L: ₹{pnl}"})
+        return JSONResponse({"status": "error", "message": "Position mali nahi."})
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)})
+
+@app.post("/api/paper/reset")
+def reset_paper_funds():
+    PAPER_STATE["capital"] = 100000.0
+    PAPER_STATE["available_funds"] = 100000.0
+    PAPER_STATE["positions"] = []
+    PAPER_STATE["order_history"] = []
+    return JSONResponse({"status": "success", "message": "Funds Reset thai ne ₹1,00,000 thai gaya!"})
+
 @app.post("/api/ai/ask")
 async def ask_gemini_market(request: Request):
     try:
         body = await request.json()
         question = body.get("question", "").strip()
         if not question:
-            return JSONResponse({"answer": "કૃપા કરીને તમારો પ્રશ્ન લખો."})
+            return JSONResponse({"answer": "Krupa kari ne prashna lakho."})
 
         stream = get_quantum_oi_stream()
         spot = stream.get("spot", 0)
@@ -599,32 +737,20 @@ async def ask_gemini_market(request: Request):
         verdict = stream.get("verdict", "")
         sup = stream.get("main_sup", {}).get("strike", 0)
         res = stream.get("main_res", {}).get("strike", 0)
-        action = stream.get("action", "")
+        vix = stream.get("india_vix", 14.5)
 
-        q_lower = question.lower()
-        
-        if any(w in q_lower for w in ["call", "ce", "lewa", "buy", "teji", "upar"]):
-            if pcr >= 1.10:
-                answer = f"✅ હા ભાઈ, અત્યારે માર્કેટમાં PCR {pcr} સાથે તેજીનું જોર છે. સ્પોટ {spot} પર ચાલે છે અને નજીકનો સપોર્ટ {sup} PE પર મજબૂત છે. જો નાની ડીપ મળે તો {stream.get('atm')} CE ખરીદવામાં સારો નફો મળશે! ટાર્ગેટ {res} રહેશે."
-            else:
-                answer = f"⚠️ સાવધાન! PCR {pcr} નબળો છે. ઉતાવળમાં કૉલ ન લેશો, જ્યાં સુધી {res} ઉપર 5-મિનિટની લીલી કેન્ડલ ક્લોઝ ન થાય ત્યાં સુધી રાહ જુઓ."
-        elif any(w in q_lower for w in ["put", "pe", "mandi", "niche", "sell", "tutshe"]):
-            if pcr <= 0.85:
-                answer = f"🩸 હા, અત્યારે PCR {pcr} નીચે છે અને કૉલ રાઇટર્સ {res} CE પર બજારને દબાવી રહ્યા છે. જો સ્પોટ {sup} નીચે જાય તો Put (PE) સાઇડ સારો ટ્રેડ બનશે."
-            else:
-                answer = f"❌ પુટ (PE) લેવાની બિલકુલ ભૂલ ના કરશો! PCR {pcr} તેજીમાં છે અને પુટ રાઇટર્સ {sup} પર દીવાલ બનાવીને બેઠા છે. અહીં પુટ લેશો તો સ્ટોપલોસ હંટ થઈ જશે!"
-        elif any(w in q_lower for w in ["max pain", "pain", "settle", "expiry"]):
-            answer = f"🎯 Max Pain Analysis: એક્સપાયરીના દિવસે સેલર્સ માર્કેટને Max Pain Strike તરફ રાખવા પ્રયત્ન કરે છે, જેથી તેમનો નફો મહત્તમ રહે."
-        elif any(w in q_lower for w in ["delta", "theta", "greek", "points"]):
-            answer = f"📊 Greeks Guidance: Delta મુજબ નિફ્ટીમાં 50 પોઈન્ટની મુવમેન્ટ સામે તમારા ઓપ્શન પ્રીમિયમમાં થતો લાઈવ પોઈન્ટ્સ ઉછાળો સ્ક્રીન પર HUD માં જોઈ શકાય છે."
+        q = question.lower()
+        if any(w in q for w in ["call", "ce", "buy"]):
+            ans = f"✅ Nifty Spot ₹{spot} chhe. Support {sup} PE chhe. PCR {pcr} pramane trade lo."
+        elif any(w in q for w in ["put", "pe", "sell"]):
+            ans = f"🩸 Resistance {res} CE chhe. PCR {pcr} mandi batavi rahyo chhe."
         else:
-            answer = f"🤖 Gemini Live Outlook: નિફ્ટી અત્યારે {spot} પર ચાલે છે. PCR {pcr} અને સિગ્નલ '{verdict}' છે. સલાહ: {action}."
-
-        return JSONResponse({"answer": answer})
+            ans = f"🤖 Live Nifty: ₹{spot} | PCR: {pcr} ({verdict}) | India VIX: {vix}."
+        return JSONResponse({"answer": ans})
     except Exception as e:
-        return JSONResponse({"answer": f"ક્ષમા કરશો, ડેટા વિશ્લેષણમાં ભૂલ આવી: {str(e)}"})
+        return JSONResponse({"answer": f"Error: {str(e)}"})
 
-# ==================== TERMINAL FRONTEND (100% FIXED RESILIENT TRADINGVIEW PALETTE) ====================
+# ==================== PAGE 1: PRO TERMINAL (ORIGINAL 3 CHARTS + GREEKS) ====================
 TERMINAL_HTML = r"""<!DOCTYPE html>
 <html>
 <head>
@@ -636,12 +762,13 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { background: #080b11; color: #d1d4dc; font-family: -apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
         .header-bar { height: 44px; background: #0e131f; border-bottom: 1px solid #1a2234; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; z-index: 20; }
-        .brand { font-size: 14.5px; font-weight: 900; color: #38bdf8; display: flex; align-items: center; gap: 6px; }
+        .brand { font-size: 14px; font-weight: 900; color: #38bdf8; display: flex; align-items: center; gap: 6px; }
         .spot-badge { font-weight: 800; color: #00ff88; background: #062319; border: 1px solid #00ff88; padding: 3px 10px; border-radius: 4px; font-size: 12px; }
         .pain-badge { font-weight: 800; color: #fbbf24; background: rgba(251, 191, 36, 0.15); border: 1px solid #fbbf24; padding: 3px 8px; border-radius: 4px; font-size: 11px; }
-        .expiry-select { background: #141c2c; border: 1px solid #38bdf8; color: #38bdf8; padding: 3px 8px; border-radius: 4px; font-size: 11.5px; font-weight: 700; outline: none; cursor: pointer; }
-        .btn-nav-oi { background: #04251f; border: 1.5px solid #00ff88; color: #00ff88; padding: 4px 12px; border-radius: 4px; font-size: 11px; font-weight: 800; text-decoration: none; box-shadow: 0 0 10px rgba(0,255,136,0.2); }
-        .btn-nav-oi:hover { background: #00ff88; color: #000; }
+        .expiry-select { background: #141c2c; border: 1px solid #38bdf8; color: #38bdf8; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; outline: none; cursor: pointer; }
+        .btn-nav { padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: 800; text-decoration: none; display: inline-flex; align-items: center; }
+        .btn-nav-oi { background: #04251f; border: 1.5px solid #00ff88; color: #00ff88; }
+        .btn-nav-paper { background: #172554; border: 1.5px solid #38bdf8; color: #38bdf8; margin-left:6px; }
         .workspace { flex: 1; display: flex; width: 100%; height: calc(100vh - 44px); }
         .charts-column { flex: 6.8; display: flex; flex-direction: column; gap: 2px; background: #141b2b; }
         .spot-card { flex: 5.6; position: relative; background: #080b11; min-height: 250px; }
@@ -659,22 +786,10 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
         .selected-ce-cell { background: rgba(0, 255, 136, 0.25) !important; font-weight: bold; border-left: 3px solid #00ff88; }
         .selected-pe-cell { background: rgba(255, 34, 85, 0.25) !important; font-weight: bold; border-right: 3px solid #ff2255; }
         .lbl { position: absolute; top: 6px; left: 10px; font-size: 11px; font-weight: 700; z-index: 10; pointer-events: none; background: rgba(8,11,17,0.85); padding: 2px 8px; border-radius: 3px; border: 1px solid #1a2234; }
-
         .greeks-hud-card {
-            position: absolute;
-            top: 32px;
-            left: 10px;
-            background: rgba(14, 19, 31, 0.94);
-            border: 1px solid #1f2f45;
-            border-radius: 6px;
-            padding: 6px 12px;
-            font-size: 11px;
-            z-index: 15;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.6);
-            display: flex;
-            flex-direction: column;
-            gap: 3px;
-            min-width: 175px;
+            position: absolute; top: 32px; left: 10px; background: rgba(14, 19, 31, 0.94);
+            border: 1px solid #1f2f45; border-radius: 6px; padding: 6px 12px; font-size: 11px; z-index: 15;
+            display: flex; flex-direction: column; gap: 3px; min-width: 175px;
         }
         .greeks-hud-card div { display: flex; justify-content: space-between; gap: 8px; }
     </style>
@@ -687,11 +802,12 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
             <select class="expiry-select" id="expiryDropdown" onchange="onExpiryChange()">
                 <option value="">Loading Expiries...</option>
             </select>
-            <div class="spot-badge" id="spotBadge">NIFTY: 23,810.85</div>
+            <div class="spot-badge" id="spotBadge">NIFTY: 23,795.00</div>
             <div class="pain-badge" id="maxPainBadge">🎯 MAX PAIN: CALCULATING...</div>
         </div>
-        <div style="display:flex; gap:10px; align-items:center;">
-            <a href="/oi-analytics" target="_blank" class="btn-nav-oi">⚡ QUANTUM REVERSAL MATRIX</a>
+        <div style="display:flex; align-items:center;">
+            <a href="/oi-analytics" class="btn-nav btn-nav-oi">⚡ QUANTUM RADAR</a>
+            <a href="/paper-trading" class="btn-nav btn-nav-paper">📱 ANGEL PAPER APP</a>
         </div>
     </div>
 
@@ -699,7 +815,6 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
         <div class="charts-column">
             <div class="spot-card">
                 <div class="lbl" style="color:#38bdf8;">NIFTY 50 SPOT (5M) • MAX PAIN & LIVE GREEKS</div>
-                
                 <div class="greeks-hud-card" id="greeksCard" style="display:none;">
                     <div style="color:#38bdf8; font-weight:800; border-bottom:1px solid #1e293b; padding-bottom:3px;">
                         <span>ATM GREEKS</span><span id="greeksAtmLabel" style="color:#fbbf24;">ATM: --</span>
@@ -708,13 +823,12 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
                     <div><span style="color:#94a3b8;">PUT DELTA (Δ)</span><b id="lblPutDelta" style="color:#ff2255;">--</b></div>
                     <div><span style="color:#94a3b8;">THETA (θ/DAY)</span><b id="lblTheta" style="color:#fbbf24;">--</b></div>
                     <div style="border-top:1px dashed #1e293b; margin-top:2px; padding-top:2px;">
-                        <span style="color:#00ff88;">NIFTY +50 CE ઉછાળો</span><b id="lblCePoints" style="color:#00ff88;">+0.0 Pts</b>
+                        <span style="color:#00ff88;">NIFTY +65 CE ઉછાળો</span><b id="lblCePoints" style="color:#00ff88;">+0.0 Pts</b>
                     </div>
                     <div>
-                        <span style="color:#ff2255;">NIFTY -50 PE ઉછાળો</span><b id="lblPePoints" style="color:#ff2255;">+0.0 Pts</b>
+                        <span style="color:#ff2255;">NIFTY -65 PE ઉછાળો</span><b id="lblPePoints" style="color:#ff2255;">+0.0 Pts</b>
                     </div>
                 </div>
-
                 <div id="chart_spot" class="chart-container-box"></div>
             </div>
             <div class="opt-row">
@@ -759,48 +873,20 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
 
         const tvChartOpts = {
             autoSize: true,
-            layout: { 
-                background: { color: '#080b11' }, 
-                textColor: '#94a3b8', 
-                fontSize: 11,
-                fontFamily: '-apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, sans-serif'
-            },
-            grid: { 
-                vertLines: { color: '#141b2b' }, 
-                horzLines: { color: '#141b2b' } 
-            },
-            crosshair: {
-                vertLine: { color: '#38bdf8', style: 2, labelBackgroundColor: '#1e293b' },
-                horzLine: { color: '#38bdf8', style: 2, labelBackgroundColor: '#1e293b' }
-            },
-            rightPriceScale: { 
-                visible: true, 
-                borderColor: '#1a2234', 
-                scaleMargins: { top: 0.1, bottom: 0.1 }, 
-                mode: 0, 
-                autoScale: true, 
-                alignLabels: true 
-            },
-            timeScale: { 
-                borderColor: '#1a2234', 
-                timeVisible: true, 
-                secondsVisible: false 
-            }
+            layout: { background: { color: '#080b11' }, textColor: '#94a3b8', fontSize: 11 },
+            grid: { vertLines: { color: '#141b2b' }, horzLines: { color: '#141b2b' } },
+            rightPriceScale: { visible: true, borderColor: '#1a2234', scaleMargins: { top: 0.1, bottom: 0.1 } },
+            timeScale: { borderColor: '#1a2234', timeVisible: true }
         };
 
         const tvCandleOpts = {
-            upColor: '#00ff88', 
-            downColor: '#ff2255',
-            borderUpColor: '#00ff88', 
-            borderDownColor: '#ff2255',
-            wickUpColor: '#00ff88', 
-            wickDownColor: '#ff2255',
-            priceFormat: { type: 'price', precision: 2, minMove: 0.05 }
+            upColor: '#00ff88', downColor: '#ff2255',
+            borderUpColor: '#00ff88', borderDownColor: '#ff2255',
+            wickUpColor: '#00ff88', wickDownColor: '#ff2255'
         };
 
         const spotChart = LightweightCharts.createChart(document.getElementById('chart_spot'), tvChartOpts);
         const spotSeries = spotChart.addCandlestickSeries(tvCandleOpts);
-
         let maxPainPriceLine = null;
 
         const ceChart = LightweightCharts.createChart(document.getElementById('chart_ce'), tvChartOpts);
@@ -815,31 +901,17 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
             fetchTerminalData(true);
         }
 
-        function clickSelectCE(strike) {
-            selectedCE = strike;
-            fetchTerminalData(true);
-        }
-
-        function clickSelectPE(strike) {
-            selectedPE = strike;
-            fetchTerminalData(true);
-        }
+        function clickSelectCE(strike) { selectedCE = strike; fetchTerminalData(true); }
+        function clickSelectPE(strike) { selectedPE = strike; fetchTerminalData(true); }
 
         function triggerChartResize() {
             try {
                 const sEl = document.getElementById('chart_spot');
                 const cEl = document.getElementById('chart_ce');
                 const pEl = document.getElementById('chart_pe');
-
-                if (sEl && sEl.clientWidth > 0 && sEl.clientHeight > 0) {
-                    spotChart.resize(sEl.clientWidth, sEl.clientHeight);
-                }
-                if (cEl && cEl.clientWidth > 0 && cEl.clientHeight > 0) {
-                    ceChart.resize(cEl.clientWidth, cEl.clientHeight);
-                }
-                if (pEl && pEl.clientWidth > 0 && pEl.clientHeight > 0) {
-                    peChart.resize(pEl.clientWidth, pEl.clientHeight);
-                }
+                if (sEl && sEl.clientWidth > 0) spotChart.resize(sEl.clientWidth, sEl.clientHeight);
+                if (cEl && cEl.clientWidth > 0) ceChart.resize(cEl.clientWidth, cEl.clientHeight);
+                if (pEl && pEl.clientWidth > 0) peChart.resize(pEl.clientWidth, pEl.clientHeight);
             } catch(e) {}
         }
 
@@ -850,10 +922,7 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
                 let data = await res.json();
 
                 if (data.spot) document.getElementById('spotBadge').innerText = `NIFTY: ₹ ${data.spot.toLocaleString()}`;
-
-                if (data.active_expiry) {
-                    document.getElementById('expLabel').innerText = `Exp: ${data.active_expiry}`;
-                }
+                if (data.active_expiry) document.getElementById('expLabel').innerText = `Exp: ${data.active_expiry}`;
 
                 if (data.all_expiries && data.all_expiries.length > 0) {
                     const dropdown = document.getElementById('expiryDropdown');
@@ -872,20 +941,13 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
 
                 if (data.candles && data.candles.length > 0) {
                     spotSeries.setData(data.candles.map(c => ({ time: c.time + 19800, open: c.open, high: c.high, low: c.low, close: c.close })));
-                    if (isFirstLoad || forceFit) { spotChart.timeScale().fitContent(); }
+                    if (isFirstLoad || forceFit) spotChart.timeScale().fitContent();
                 }
 
                 if (data.max_pain) {
                     document.getElementById('maxPainBadge').innerText = `🎯 MAX PAIN: ${data.max_pain}`;
                     if (maxPainPriceLine) spotSeries.removePriceLine(maxPainPriceLine);
-                    maxPainPriceLine = spotSeries.createPriceLine({
-                        price: data.max_pain,
-                        color: '#fbbf24',
-                        lineWidth: 2,
-                        lineStyle: 2,
-                        axisLabelVisible: true,
-                        title: 'MAX PAIN'
-                    });
+                    maxPainPriceLine = spotSeries.createPriceLine({ price: data.max_pain, color: '#fbbf24', lineWidth: 2, lineStyle: 2, title: 'MAX PAIN' });
                 }
 
                 if (data.greeks) {
@@ -895,22 +957,22 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
                     document.getElementById('lblCallDelta').innerText = `+${g.call_delta}`;
                     document.getElementById('lblPutDelta').innerText = `${g.put_delta}`;
                     document.getElementById('lblTheta').innerText = `₹ ${g.call_theta}`;
-                    document.getElementById('lblCePoints').innerText = `+${g.ce_pts_50} Pts`;
-                    document.getElementById('lblPePoints').innerText = `+${g.pe_pts_50} Pts`;
+                    document.getElementById('lblCePoints').innerText = `+${g.ce_pts_65} Pts`;
+                    document.getElementById('lblPePoints').innerText = `+${g.pe_pts_65} Pts`;
                 }
 
                 if (data.ce_candles && data.ce_candles.length > 0) {
                     ceSeries.setData(data.ce_candles.map(c => ({ time: c.time + 19800, open: c.open, high: c.high, low: c.low, close: c.close })));
                     let lastP = data.ce_candles[data.ce_candles.length - 1].close;
                     document.getElementById('lbl_ce').innerText = `CALL: NIFTY ${data.active_ce} CE (₹${lastP.toFixed(2)})`;
-                    if (isFirstLoad || forceFit) { ceChart.timeScale().fitContent(); }
+                    if (isFirstLoad || forceFit) ceChart.timeScale().fitContent();
                 }
 
                 if (data.pe_candles && data.pe_candles.length > 0) {
                     peSeries.setData(data.pe_candles.map(c => ({ time: c.time + 19800, open: c.open, high: c.high, low: c.low, close: c.close })));
                     let lastP = data.pe_candles[data.pe_candles.length - 1].close;
                     document.getElementById('lbl_pe').innerText = `PUT: NIFTY ${data.active_pe} PE (₹${lastP.toFixed(2)})`;
-                    if (isFirstLoad || forceFit) { peChart.timeScale().fitContent(); }
+                    if (isFirstLoad || forceFit) peChart.timeScale().fitContent();
                 }
 
                 if (data.chain && data.chain.length > 0) {
@@ -919,15 +981,11 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
                         let ceCls = r.is_selected_ce ? 'selected-ce-cell' : '';
                         let peCls = r.is_selected_pe ? 'selected-pe-cell' : '';
                         let atmCls = r.is_atm ? 'atm-row' : '';
-
-                        let cePriceDisplay = r.ltp_ce > 0 ? `₹ ${r.ltp_ce.toFixed(2)}` : '-';
-                        let pePriceDisplay = r.ltp_pe > 0 ? `₹ ${r.ltp_pe.toFixed(2)}` : '-';
-
                         html += `<tr class="${atmCls}">
                             <td class="${ceCls}" onclick="clickSelectCE(${r.strike})" style="color:#00ff88; font-weight:700;">${r.oi_ce_str}</td>
-                            <td class="${ceCls}" onclick="clickSelectCE(${r.strike})" style="color:#38bdf8; font-weight:800;">${cePriceDisplay}</td>
+                            <td class="${ceCls}" onclick="clickSelectCE(${r.strike})" style="color:#38bdf8; font-weight:800;">₹ ${r.ltp_ce.toFixed(2)}</td>
                             <td style="font-weight:bold; background:#161e2e; color:#fff;">${r.strike}</td>
-                            <td class="${peCls}" onclick="clickSelectPE(${r.strike})" style="color:#ff2255; font-weight:800;">${pePriceDisplay}</td>
+                            <td class="${peCls}" onclick="clickSelectPE(${r.strike})" style="color:#ff2255; font-weight:800;">₹ ${r.ltp_pe.toFixed(2)}</td>
                             <td class="${peCls}" onclick="clickSelectPE(${r.strike})" style="color:#ff2255; font-weight:700;">${r.oi_pe_str}</td>
                         </tr>`;
                     });
@@ -935,26 +993,12 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
                 }
 
                 triggerChartResize();
-                if (isFirstLoad) {
-                    setTimeout(() => {
-                        spotChart.timeScale().fitContent();
-                        ceChart.timeScale().fitContent();
-                        peChart.timeScale().fitContent();
-                        isFirstLoad = false;
-                    }, 300);
-                }
-
-            } catch (e) {
-                console.error("Terminal Stream Error:", e);
-            }
+                isFirstLoad = false;
+            } catch (e) {}
         }
 
         window.addEventListener('resize', triggerChartResize);
-        window.addEventListener('DOMContentLoaded', () => {
-            triggerChartResize();
-            fetchTerminalData(true);
-        });
-
+        window.addEventListener('DOMContentLoaded', () => { triggerChartResize(); fetchTerminalData(true); });
         fetchTerminalData(true);
         setInterval(fetchTerminalData, 4000);
     </script>
@@ -962,15 +1006,13 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
 </html>
 """
 
-# ==================== QUANTUM REVERSAL MATRIX WITH GEMINI COPILOT ====================
+# ==================== PAGE 2: ORIGINAL QUANTUM OI RADAR (NERVE MATRIX & POPUPS) ====================
 OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="gu">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Hari Master Quantum OI Radar</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hari Master Quantum OI Radar - Live Trade Alert & VIX</title>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Gujarati:wght@500;700;800;900&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -982,340 +1024,125 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             --purple-glow: #c084fc;
             --text-dim: #94a3b8;
         }
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Noto Sans Gujarati', -apple-system, BlinkMacSystemFont, monospace, sans-serif; }
-        body { 
-            background: var(--bg-deep); 
-            color: #fff; 
-            min-height: 100vh; 
-            display: flex; 
-            flex-direction: column; 
-            overflow-x: hidden; 
-            overflow-y: auto !important; 
-        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Noto Sans Gujarati', monospace, sans-serif; }
+        body { background: var(--bg-deep); color: #fff; min-height: 100vh; display: flex; flex-direction: column; overflow-x: hidden; }
 
-        .cyber-header {
-            height: 38px;
-            background: #090e17;
-            border-bottom: 1.5px solid #142033;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0 14px;
-            flex-shrink: 0;
-        }
-        .header-title { font-size: 14px; font-weight: 900; color: var(--cyan-glow); display: flex; align-items: center; gap: 8px; }
-        .btn-audio-toggle {
-            background: #14241e;
-            border: 1.3px solid var(--green-glow);
-            color: var(--green-glow);
-            padding: 3px 8px;
-            border-radius: 4px;
-            font-size: 10.5px;
-            font-weight: 900;
-            cursor: pointer;
-            outline: none;
-            display: flex;
-            align-items: center;
-            gap: 4px;
-        }
-        .btn-back-chart { background: #101c2e; border: 1.3px solid var(--cyan-glow); color: var(--cyan-glow); padding: 3px 10px; border-radius: 4px; font-size: 11px; text-decoration: none; font-weight: 800; }
+        .cyber-header { height: 38px; background: #090e17; border-bottom: 1.5px solid #142033; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; flex-shrink: 0; }
+        .header-title { font-size: 13.5px; font-weight: 900; color: var(--cyan-glow); display: flex; align-items: center; gap: 8px; }
+        .btn-audio-toggle { background: #14241e; border: 1.3px solid var(--green-glow); color: var(--green-glow); padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 900; cursor: pointer; }
+        .vix-badge-pill { background: rgba(192, 132, 252, 0.2); border: 1px solid var(--purple-glow); color: var(--purple-glow); font-size: 10.5px; padding: 2px 8px; border-radius: 4px; font-weight: 900; }
+        .btn-nav-link { background: #101c2e; border: 1.3px solid var(--cyan-glow); color: var(--cyan-glow); padding: 3px 10px; border-radius: 4px; font-size: 11px; text-decoration: none; font-weight: 800; }
 
-        .signal-strip {
-            height: 48px;
-            background: #080d17;
-            border-bottom: 1px solid #142033;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0 14px;
-            flex-shrink: 0;
-        }
-        .verdict-tag { font-size: 13.5px; font-weight: 900; }
+        .signal-strip { height: 46px; background: #080d17; border-bottom: 1px solid #142033; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; flex-shrink: 0; }
+        .verdict-tag { font-size: 13px; font-weight: 900; }
 
-        .major-node-box { display: flex; gap: 8px; align-items: center; }
-        .node-badge { padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 900; display: flex; align-items: center; gap: 4px; }
-        .res-node { background: rgba(255, 34, 85, 0.2); border: 1.5px solid var(--red-glow); color: var(--red-glow); }
-        .sup-node { background: rgba(0, 255, 136, 0.2); border: 1.5px solid var(--green-glow); color: var(--green-glow); }
+        .power-meter-container { display: flex; align-items: center; gap: 6px; background: #0d1522; padding: 4px 8px; border-radius: 4px; border: 1px solid #1e293b; }
+        .power-bar-track { width: 60px; height: 6px; background: #ff2255; border-radius: 4px; overflow: hidden; }
+        .power-bar-fill { height: 100%; background: #00ff88; }
 
-        .power-meter-container {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            background: #0d1522;
-            padding: 4px 8px;
-            border-radius: 4px;
-            border: 1px solid #1e293b;
-        }
-        .power-bar-track { width: 65px; height: 7px; background: #ff2255; border-radius: 4px; overflow: hidden; }
-        .power-bar-fill { height: 100%; background: #00ff88; transition: width 0.5s ease; }
-
-        .stream-workspace {
-            flex: 1;
-            display: flex;
-            width: 100%;
-            min-height: calc(100vh - 128px);
-            position: relative;
-        }
-
-        .matrix-canvas-box { 
-            flex: 1; 
-            position: relative; 
-            background: #040609; 
-            overflow: hidden; 
-        }
+        .stream-workspace { flex: 1; display: flex; width: 100%; min-height: calc(100vh - 135px); position: relative; }
+        .matrix-canvas-box { flex: 1; position: relative; background: #040609; overflow: hidden; }
         #streamCanvas { width: 100%; height: 100%; display: block; }
 
-        .strike-nodes-col {
-            width: 440px;
-            max-width: 49%;
-            background: #080d16;
-            border-left: 1.5px solid #142033;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            padding: 4px 8px;
-            position: relative;
-            min-height: 100%;
-            flex-shrink: 0;
-            overflow-y: visible;
-        }
-
-        .strike-group-container {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-around;
-            padding: 1px 0;
-            gap: 2px;
-        }
-
-        .strike-card-node {
-            background: #0d1522;
-            border: 1.2px solid #1f2f45;
-            border-radius: 5px;
-            padding: 4px 8px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 12.5px;
-            position: relative;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.5);
-            white-space: nowrap;
-        }
+        .strike-nodes-col { width: 440px; max-width: 49%; background: #080d16; border-left: 1.5px solid #142033; display: flex; flex-direction: column; justify-content: space-between; padding: 4px 8px; }
+        .strike-group-container { flex: 1; display: flex; flex-direction: column; justify-content: space-around; gap: 2px; }
+        .strike-card-node { background: #0d1522; border: 1.2px solid #1f2f45; border-radius: 5px; padding: 4px 8px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
         .node-call { border-left: 4px solid var(--green-glow); }
         .node-put { border-left: 4px solid var(--red-glow); }
-        
-        .badge-atm { background: rgba(0, 240, 255, 0.25); color: var(--cyan-glow); border: 1.2px solid var(--cyan-glow); padding: 1px 4px; border-radius: 3px; font-weight: 900; font-size: 9.5px; }
-        .badge-itm { background: rgba(192, 132, 252, 0.25); color: var(--purple-glow); border: 1.2px solid var(--purple-glow); padding: 1px 4px; border-radius: 3px; font-weight: 900; font-size: 9.5px; }
-        .badge-otm { background: rgba(100, 116, 139, 0.25); color: #cbd5e1; padding: 1px 4px; border-radius: 3px; font-size: 9.5px; font-weight: 800; }
 
-        .strike-card-node.atm-node-active {
-            border: 2px solid var(--cyan-glow) !important;
-            background: rgba(56, 189, 248, 0.25) !important;
-            box-shadow: 0 0 12px rgba(0,240,255,0.4) !important;
-        }
-        .strike-card-node.main-res-active {
-            border: 2px solid var(--red-glow) !important;
-            background: rgba(255, 34, 85, 0.25) !important;
-        }
-        .strike-card-node.main-sup-active {
-            border: 2px solid var(--green-glow) !important;
-            background: rgba(0, 255, 136, 0.25) !important;
-        }
+        .spot-axis-divider { height: 25px; background: #ffffff; border-radius: 4px; color: #000; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; font-weight: 900; font-size: 12px; margin: 3px 0; }
 
-        .glow-plus { color: var(--green-glow); font-weight: 900; font-size: 12.5px; }
-        .glow-minus { color: var(--red-glow); font-weight: 900; font-size: 12.5px; }
+        .confidence-deck { background: #070d18; border-top: 1.5px solid #1a2a44; padding: 6px 12px; display: flex; flex-direction: column; gap: 5px; }
+        .news-ticker-container { flex: 1; overflow: hidden; white-space: nowrap; }
+        .news-scroll-text { display: inline-block; white-space: nowrap; color: #f8fafc; font-size: 12px; font-weight: 700; animation: marquee 35s linear infinite; }
+        @keyframes marquee { 0% { transform: translateX(100%); } 100% { transform: translateX(-100%); } }
 
-        .spot-axis-divider {
-            height: 25px;
-            background: #ffffff;
-            border-radius: 4px;
-            color: #000;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0 10px;
-            font-weight: 900;
-            font-size: 12.5px;
-            box-shadow: 0 0 14px rgba(255,255,255,0.9);
-            margin: 3px 0;
-            z-index: 5;
-            flex-shrink: 0;
+        /* MODAL POPUP */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(0,0,0,0.75); display: none; justify-content: center; align-items: center; z-index: 100;
         }
-
-        .confidence-deck {
-            background: #070d18;
-            border-top: 1.5px solid #1a2a44;
-            padding: 6px 12px;
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            flex-shrink: 0;
-            position: sticky;
-            bottom: 0;
-            z-index: 50;
+        .modal-card {
+            background: #0f172a; border: 2px solid #00f0ff; border-radius: 8px; width: 380px; padding: 16px;
+            box-shadow: 0 0 25px rgba(0, 240, 255, 0.4);
         }
-
-        .news-ticker-container { flex: 1; overflow: hidden; position: relative; white-space: nowrap; }
-        .news-scroll-text {
-            display: inline-block;
-            white-space: nowrap;
-            color: #f8fafc;
-            font-size: 12.5px;
-            font-weight: 700;
-            animation: slowMarquee 40s linear infinite;
-        }
-        @keyframes slowMarquee { 
-            0% { transform: translateX(100%); } 
-            100% { transform: translateX(-100%); } 
-        }
-
-        .gemini-copilot-box {
-            display: flex;
-            gap: 8px;
-            align-items: center;
-            background: #0d1524;
-            border: 1px solid #1e3a5f;
-            border-radius: 5px;
-            padding: 5px 8px;
-        }
-        .gemini-copilot-input {
-            flex: 1;
-            background: transparent;
-            border: none;
-            outline: none;
-            color: #fff;
-            font-size: 12px;
-            font-weight: 600;
-        }
-        .gemini-copilot-btn {
-            background: linear-gradient(135deg, #00f0ff, #0088ff);
-            color: #000;
-            border: none;
-            padding: 5px 14px;
-            border-radius: 4px;
-            font-weight: 900;
-            font-size: 11px;
-            cursor: pointer;
-        }
-        .gemini-response-text {
-            font-size: 11.5px;
-            color: #a5f3fc;
-            background: rgba(6, 30, 48, 0.7);
-            border-left: 3px solid #00f0ff;
-            padding: 6px 10px;
-            border-radius: 3px;
-            display: none;
-            line-height: 1.5;
-        }
-
-        @media (max-width: 768px) {
-            body { overflow-y: auto !important; height: auto !important; }
-            .cyber-header { height: 32px; padding: 0 8px; }
-            .header-title { font-size: 11px; }
-            .signal-strip { height: 42px; padding: 0 8px; }
-            .verdict-tag { font-size: 11px; }
-            .node-badge { font-size: 9.5px; padding: 2px 5px; }
-            .power-meter-container { display: none; }
-            .stream-workspace { min-height: 600px !important; }
-            .matrix-canvas-box { min-height: 600px !important; }
-            .strike-nodes-col { width: 310px !important; max-width: 55% !important; min-height: 600px !important; }
-            .strike-card-node { font-size: 11px !important; padding: 3px 5px !important; }
-            .spot-axis-divider { height: 22px !important; font-size: 11px !important; }
-            .news-scroll-text { font-size: 11px; }
-        }
+        .modal-title { font-size: 15px; font-weight: 900; color: #00ff88; margin-bottom: 10px; display: flex; justify-content: space-between; }
+        .modal-body { font-size: 13px; line-height: 1.7; color: #e2e8f0; }
+        .modal-close-btn { background: #ff2255; color: #fff; border: none; padding: 6px 16px; border-radius: 4px; font-weight: 800; cursor: pointer; margin-top: 12px; float: right; }
     </style>
 </head>
 <body>
     <div class="cyber-header">
         <div class="header-title">
-            <span style="display:inline-block; width:8px; height:8px; background:var(--cyan-glow); border-radius:50%; box-shadow:0 0 8px var(--cyan-glow);"></span>
+            <span style="display:inline-block; width:8px; height:8px; background:var(--cyan-glow); border-radius:50%;"></span>
             ⚡ HARI MASTER QUANTUM OI RADAR
         </div>
         <div style="display:flex; align-items:center; gap:8px;">
-            <button class="btn-audio-toggle" id="audioToggleBtn" onclick="toggleAudioAlert()">
-                <span>🔔 ALERT: ON</span>
-            </button>
+            <div class="vix-badge-pill" id="vixTopPill">INDIA VIX: 14.5</div>
+            <button class="btn-audio-toggle" id="audioToggleBtn" onclick="toggleAudioAlert()">🔔 ALERT: ON</button>
             <div style="font-size:10.5px; color:var(--text-dim);" id="expTimeTag">EXP: -- | SYNC: --</div>
-            <a href="/" class="btn-back-chart">⬅ CHARTS</a>
+            <a href="/" class="btn-nav-link">📈 CHARTS</a>
+            <a href="/paper-trading" class="btn-nav-link" style="border-color:#38bdf8; color:#38bdf8;">📱 PAPER APP</a>
         </div>
     </div>
 
     <div class="signal-strip">
         <div>
-            <div style="font-size:8.5px; color:var(--text-dim); text-transform:uppercase;">LIVE DIRECTION & TRAP:</div>
+            <div style="font-size:8.5px; color:var(--text-dim);">LIVE DIRECTION & TRAP:</div>
             <div class="verdict-tag" id="verdictText" style="color:var(--green-glow);">SCANNING...</div>
         </div>
-
         <div class="power-meter-container">
             <span style="font-size:9.5px; font-weight:800; color:var(--green-glow);">BULLS: <span id="txtBullPower">50%</span></span>
-            <div class="power-bar-track">
-                <div class="power-bar-fill" id="fillBullPower" style="width:50%;"></div>
-            </div>
+            <div class="power-bar-track"><div class="power-bar-fill" id="fillBullPower" style="width:50%;"></div></div>
             <span style="font-size:9.5px; font-weight:800; color:var(--cyan-glow); margin-left:4px;">PCR: <span id="txtPcr">1.0</span></span>
         </div>
-
-        <div class="major-node-box">
-            <div class="node-badge res-node" id="boxMajorRes">
-                <span>🛡️ RES:</span>
-                <span id="txtMajorRes">--</span>
-            </div>
-            <div class="node-badge sup-node" id="boxMajorSup">
-                <span>🏰 SUP:</span>
-                <span id="txtMajorSup">--</span>
-            </div>
+        <div>
+            <span style="font-size:9px; color:var(--text-dim);">RES:</span> <b id="txtMajorRes" style="color:#ff2255;">--</b> |
+            <span style="font-size:9px; color:var(--text-dim);">SUP:</span> <b id="txtMajorSup" style="color:#00ff88;">--</b>
         </div>
-
         <div style="text-align:right;">
-            <div style="font-size:8.5px; color:var(--text-dim); text-transform:uppercase;">ACTION:</div>
+            <div style="font-size:8.5px; color:var(--text-dim);">ACTION:</div>
             <div style="font-size:11px; font-weight:900; color:var(--cyan-glow);" id="actionText">CALCULATING...</div>
         </div>
     </div>
 
     <div class="stream-workspace">
-        <div class="matrix-canvas-box" id="canvasContainer">
-            <canvas id="streamCanvas"></canvas>
-        </div>
-
+        <div class="matrix-canvas-box" id="canvasContainer"><canvas id="streamCanvas"></canvas></div>
         <div class="strike-nodes-col">
-            <div style="font-size:10px; font-weight:bold; color:var(--green-glow); text-transform:uppercase; padding-left:2px;">
-                ▲ CALL RESISTANCE (CE)
-            </div>
+            <div style="font-size:9.5px; font-weight:bold; color:var(--green-glow);">▲ CALL RESISTANCE (CE)</div>
             <div id="callStrikesContainer" class="strike-group-container"></div>
-
             <div class="spot-axis-divider" id="spotCenterPill">
                 <span>SPOT AXIS</span>
-                <span id="spotCenterVal">₹ 23,731.65</span>
+                <span id="spotCenterVal">₹ 23,795.00</span>
             </div>
-
-            <div style="font-size:10px; font-weight:bold; color:var(--red-glow); text-transform:uppercase; padding-left:2px;">
-                ▼ PUT SUPPORT (PE)
-            </div>
+            <div style="font-size:9.5px; font-weight:bold; color:var(--red-glow);">▼ PUT SUPPORT (PE)</div>
             <div id="putStrikesContainer" class="strike-group-container"></div>
         </div>
     </div>
 
     <div class="confidence-deck">
         <div style="display:flex; align-items:center; gap:8px;">
-            <div style="background:#ff2255; color:#fff; font-weight:900; font-size:9.5px; padding:2px 6px; border-radius:3px; flex-shrink:0;">
-                🔴 લાઈવ ન્યૂઝ
-            </div>
-            <div class="news-ticker-container">
-                <div class="news-scroll-text" id="radarNewsText">
-                    📢 નિફ્ટી લાઈવ ઓપન ઈન્ટરેસ્ટ સ્કેન થઈ રહ્યો છે...
-                </div>
-            </div>
+            <div style="background:#ff2255; color:#fff; font-weight:900; font-size:9px; padding:2px 5px; border-radius:3px;">LIVE VIX & NEWS</div>
+            <div class="news-ticker-container"><div class="news-scroll-text" id="radarNewsText">📢 નિફ્ટી ઓપન ઈન્ટરેસ્ટ સ્કેન થઈ રહ્યો છે...</div></div>
         </div>
+        <div style="font-size:11px; color:#38bdf8; font-weight:800;" id="nextStepText">💡 NEXT STEP: કેલ્ક્યુલેટિંગ...</div>
+    </div>
 
-        <div class="gemini-copilot-box">
-            <span style="font-size:14px;">✨</span>
-            <input type="text" id="geminiInput" class="gemini-copilot-input" placeholder="Gemini ને પૂછો: કૉલ લેવાય કે પુટ? સપોર્ટ તૂટશે? ટ્રેપ છે કે તેજી?">
-            <button class="gemini-copilot-btn" onclick="askGeminiCopilot()">પૂછો (ASK)</button>
-        </div>
-        <div class="gemini-response-text" id="geminiResponseBox"></div>
-
-        <div style="font-size:11px; color:#38bdf8; font-weight:800; border-top:1px dashed #1a2a44; padding-top:2px;" id="nextStepText">
-            💡 NEXT STEP: કેલ્ક્યુલેટિંગ...
+    <!-- POPUP MODAL -->
+    <div class="modal-overlay" id="tradeModal">
+        <div class="modal-card">
+            <div class="modal-title">
+                <span id="popupTitle">🚨 NEW ENTRY TRIGGERED!</span>
+                <span id="popupTime" style="font-size:11px; color:#94a3b8;">11:45 AM</span>
+            </div>
+            <div class="modal-body" id="popupBody">
+                <div><b>Signal:</b> <span id="mSignal" style="color:#00ff88; font-weight:bold;">BUY 23800 PE</span></div>
+                <div><b>Entry Price:</b> <span id="mEntry">₹ 197.00</span></div>
+                <div><b>Stop Loss:</b> <span id="mSL" style="color:#ff2255; font-weight:bold;">₹ 175.00</span></div>
+                <div><b>Target (1:2):</b> <span id="mTarget" style="color:#00ff88; font-weight:bold;">₹ 240.00</span></div>
+                <div style="font-size:11px; color:#38bdf8; margin-top:4px;"><b>Reason:</b> <span id="mReason">23800 Breakdown + PCR Bearish</span></div>
+            </div>
+            <button class="modal-close-btn" onclick="closeTradeModal()">OK / DONE</button>
         </div>
     </div>
 
@@ -1327,101 +1154,55 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         let streamData = null;
         let callNodePositions = [];
         let putNodePositions = [];
-
-        let audioCtx = null;
         let isAudioEnabled = true;
-        let lastPlayedAlert = "";
+        let audioCtx = null;
+        let lastAlertSignal = "";
 
         function initAudio() {
-            if (!audioCtx) {
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            if (audioCtx.state === 'suspended') {
-                audioCtx.resume();
-            }
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
         }
 
-        function playDoubleBeep(freq1 = 880, freq2 = 1200) {
+        function playBeep() {
             if (!isAudioEnabled) return;
             initAudio();
             try {
-                let osc1 = audioCtx.createOscillator();
-                let gain1 = audioCtx.createGain();
-                osc1.type = 'sine';
-                osc1.frequency.setValueAtTime(freq1, audioCtx.currentTime);
-                gain1.gain.setValueAtTime(0.2, audioCtx.currentTime);
-                gain1.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
-                osc1.connect(gain1);
-                gain1.connect(audioCtx.destination);
-                osc1.start();
-                osc1.stop(audioCtx.currentTime + 0.15);
-
-                setTimeout(() => {
-                    let osc2 = audioCtx.createOscillator();
-                    let gain2 = audioCtx.createGain();
-                    osc2.type = 'sine';
-                    osc2.frequency.setValueAtTime(freq2, audioCtx.currentTime);
-                    gain2.gain.setValueAtTime(0.3, audioCtx.currentTime);
-                    gain2.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.25);
-                    osc2.connect(gain2);
-                    gain2.connect(audioCtx.destination);
-                    osc2.start();
-                    osc2.stop(audioCtx.currentTime + 0.25);
-                }, 160);
-            } catch (e) {}
+                let osc = audioCtx.createOscillator();
+                let gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(950, audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.3);
+            } catch(e) {}
         }
 
         function toggleAudioAlert() {
             initAudio();
             isAudioEnabled = !isAudioEnabled;
-            const btn = document.getElementById('audioToggleBtn');
-            if (isAudioEnabled) {
-                btn.innerHTML = "<span>🔔 ALERT: ON</span>";
-                btn.style.color = "var(--green-glow)";
-                btn.style.borderColor = "var(--green-glow)";
-                btn.style.background = "#14241e";
-                playDoubleBeep(880, 1200);
-            } else {
-                btn.innerHTML = "<span>🔕 ALERT: OFF</span>";
-                btn.style.color = "#94a3b8";
-                btn.style.borderColor = "#334155";
-                btn.style.background = "#0d1522";
-            }
+            document.getElementById('audioToggleBtn').innerText = isAudioEnabled ? "🔔 ALERT: ON" : "🔕 ALERT: OFF";
         }
 
-        async function askGeminiCopilot() {
-            const input = document.getElementById('geminiInput');
-            const resBox = document.getElementById('geminiResponseBox');
-            const query = input.value.trim();
-            if (!query) return;
-
-            resBox.style.display = "block";
-            resBox.innerHTML = "⏳ Gemini લાઈવ OI ડેટા અને પ્રાઈસ એક્શન વિશ્લેષણ કરી રહ્યું છે...";
-
-            try {
-                let res = await fetch('/api/ai/ask', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ question: query })
-                });
-                let data = await res.json();
-                resBox.innerHTML = `🤖 <b>Gemini Answer:</b> ${data.answer}`;
-            } catch (e) {
-                resBox.innerHTML = "❌ સર્વર કનેક્શન એરર આવી છે.";
-            }
+        function showTradeModal(p) {
+            document.getElementById('popupTitle').innerText = p.title;
+            document.getElementById('popupTime').innerText = p.time;
+            document.getElementById('mSignal').innerText = p.signal;
+            document.getElementById('mEntry').innerText = `₹ ${p.entry}`;
+            document.getElementById('mSL').innerText = `₹ ${p.sl}`;
+            document.getElementById('mTarget').innerText = `₹ ${p.target}`;
+            document.getElementById('mReason').innerText = p.reason;
+            document.getElementById('tradeModal').style.display = "flex";
+            playBeep();
         }
 
-        document.getElementById('geminiInput').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') askGeminiCopilot();
-        });
-
-        document.body.addEventListener('click', initAudio, { once: true });
-        document.body.addEventListener('touchstart', initAudio, { once: true });
+        function closeTradeModal() { document.getElementById('tradeModal').style.display = "none"; }
 
         function resize() {
             canvas.width = container.clientWidth;
             canvas.height = container.clientHeight;
-            captureTargetCoordinates();
         }
         window.addEventListener('resize', resize);
 
@@ -1434,53 +1215,30 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 document.getElementById('verdictText').style.color = streamData.color;
                 document.getElementById('actionText').innerText = streamData.action;
                 document.getElementById('spotCenterVal').innerText = `₹ ${streamData.spot.toLocaleString()}`;
-                
                 document.getElementById('radarNewsText').innerText = streamData.news;
-                document.getElementById('nextStepText').innerText = `💡 NEXT STEP & GUIDANCE: ${streamData.next_step}`;
+                document.getElementById('nextStepText').innerText = `💡 NEXT STEP: ${streamData.next_step}`;
 
+                if (streamData.india_vix) document.getElementById('vixTopPill').innerText = `INDIA VIX: ${streamData.india_vix}`;
                 if (streamData.bull_power !== undefined) {
                     document.getElementById('txtBullPower').innerText = `${streamData.bull_power}%`;
                     document.getElementById('fillBullPower').style.width = `${streamData.bull_power}%`;
                 }
-                if (streamData.pcr !== undefined) {
-                    document.getElementById('txtPcr').innerText = streamData.pcr;
-                }
+                if (streamData.pcr !== undefined) document.getElementById('txtPcr').innerText = streamData.pcr;
 
-                if (streamData.alert_type && streamData.alert_type !== "NORMAL") {
-                    if (streamData.alert_type !== lastPlayedAlert) {
-                        lastPlayedAlert = streamData.alert_type;
-                        if (streamData.alert_type === "REVERSAL_BUY") {
-                            playDoubleBeep(880, 1400);
-                        } else if (streamData.alert_type === "BEARISH_ALERT") {
-                            playDoubleBeep(700, 450);
-                        } else if (streamData.alert_type === "BULLISH_TREND") {
-                            playDoubleBeep(950, 1200);
-                        }
-                    }
-                }
+                document.getElementById('expTimeTag').innerText = `EXP: ${streamData.expiry} | SYNC: ${streamData.time}`;
+                if (streamData.main_res) document.getElementById('txtMajorRes').innerText = `${streamData.main_res.strike} (${streamData.main_res.oi_str})`;
+                if (streamData.main_sup) document.getElementById('txtMajorSup').innerText = `${streamData.main_sup.strike} (${streamData.main_sup.oi_str})`;
 
-                let displayTime = streamData.time;
-                if (!displayTime || displayTime.length < 4) {
-                    displayTime = new Date().toLocaleTimeString('en-IN', { hour12: true });
-                }
-                document.getElementById('expTimeTag').innerText = `EXP: ${streamData.expiry} | SYNC: ${displayTime}`;
-
-                if (streamData.main_res) {
-                    document.getElementById('txtMajorRes').innerText = `${streamData.main_res.strike} (${streamData.main_res.oi_str})`;
-                }
-                if (streamData.main_sup) {
-                    document.getElementById('txtMajorSup').innerText = `${streamData.main_sup.strike} (${streamData.main_sup.oi_str})`;
+                if (streamData.alert_popup && streamData.alert_popup.signal !== lastAlertSignal) {
+                    lastAlertSignal = streamData.alert_popup.signal;
+                    showTradeModal(streamData.alert_popup);
                 }
 
                 let cHtml = '';
                 streamData.calls.forEach((c, idx) => {
-                    let isMain = (streamData.main_res && streamData.main_res.strike === c.strike) ? 'main-res-active' : (c.is_atm ? 'atm-node-active' : '');
-                    let badge = c.chg > 0 ? `<span class="glow-plus">${c.chg_str}</span>` : (c.chg < 0 ? `<span class="glow-minus">${c.chg_str}</span>` : `<span style="color:#94a3b8; font-weight:800;">${c.chg_str}</span>`);
-                    let ltpText = c.ltp > 0 ? `₹${c.ltp.toFixed(2)}` : '-';
-                    let typeBadge = `<span class="badge-${c.type_tag.toLowerCase()}">${c.type_tag}</span>`;
-
-                    cHtml += `<div class="strike-card-node node-call ${isMain}" id="cNode_${idx}">
-                        <span><b>${c.strike} CE</b> ${typeBadge} <span style="color:#38bdf8; font-weight:800; margin-left:4px;">${ltpText}</span> <small style="color:#94a3b8; margin-left:3px;">OI:${c.oi_str}</small></span>
+                    let badge = c.chg > 0 ? `<span style="color:#00ff88; font-weight:800;">${c.chg_str}</span>` : `<span style="color:#ff2255; font-weight:800;">${c.chg_str}</span>`;
+                    cHtml += `<div class="strike-card-node node-call" id="cNode_${idx}">
+                        <span><b>${c.strike} CE</b> <small style="color:#38bdf8;">₹${c.ltp.toFixed(2)}</small> <small style="color:#94a3b8;">OI:${c.oi_str}</small></span>
                         ${badge}
                     </div>`;
                 });
@@ -1488,197 +1246,316 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 
                 let pHtml = '';
                 streamData.puts.forEach((p, idx) => {
-                    let isMain = (streamData.main_sup && streamData.main_sup.strike === p.strike) ? 'main-sup-active' : (p.is_atm ? 'atm-node-active' : '');
-                    let badge = p.chg > 0 ? `<span class="glow-plus">${p.chg_str}</span>` : (p.chg < 0 ? `<span class="glow-minus">${p.chg_str}</span>` : `<span style="color:#94a3b8; font-weight:800;">${p.chg_str}</span>`);
-                    let ltpText = p.ltp > 0 ? `₹${p.ltp.toFixed(2)}` : '-';
-                    let typeBadge = `<span class="badge-${p.type_tag.toLowerCase()}">${p.type_tag}</span>`;
-
-                    pHtml += `<div class="strike-card-node node-put ${isMain}" id="pNode_${idx}">
-                        <span><b>${p.strike} PE</b> ${typeBadge} <span style="color:#ff2255; font-weight:800; margin-left:4px;">${ltpText}</span> <small style="color:#94a3b8; margin-left:3px;">OI:${p.oi_str}</small></span>
+                    let badge = p.chg > 0 ? `<span style="color:#00ff88; font-weight:800;">${p.chg_str}</span>` : `<span style="color:#ff2255; font-weight:800;">${p.chg_str}</span>`;
+                    pHtml += `<div class="strike-card-node node-put" id="pNode_${idx}">
+                        <span><b>${p.strike} PE</b> <small style="color:#ff2255;">₹${p.ltp.toFixed(2)}</small> <small style="color:#94a3b8;">OI:${p.oi_str}</small></span>
                         ${badge}
                     </div>`;
                 });
                 document.getElementById('putStrikesContainer').innerHTML = pHtml;
 
-                captureTargetCoordinates();
-
             } catch(e) {}
-        }
-
-        function captureTargetCoordinates() {
-            callNodePositions = [];
-            putNodePositions = [];
-            const containerRect = container.getBoundingClientRect();
-
-            if (streamData && streamData.calls) {
-                streamData.calls.forEach((c, idx) => {
-                    let el = document.getElementById(`cNode_${idx}`);
-                    if (el) {
-                        let r = el.getBoundingClientRect();
-                        callNodePositions.push(r.top - containerRect.top + (r.height / 2));
-                    }
-                });
-            }
-
-            if (streamData && streamData.puts) {
-                streamData.puts.forEach((p, idx) => {
-                    let el = document.getElementById(`pNode_${idx}`);
-                    if (el) {
-                        let r = el.getBoundingClientRect();
-                        putNodePositions.push(r.top - containerRect.top + (r.height / 2));
-                    }
-                });
-            }
-        }
-
-        function drawFloatingOIBadge(x, y, text, isPositive, isNegative, isMain, isAtm, isPutLine) {
-            ctx.save();
-            ctx.font = 'bold 9.5px monospace, sans-serif';
-            let tw = ctx.measureText(text).width;
-            let padX = 5;
-            let bw = tw + (padX * 2);
-            let bh = 15;
-            let bx = x - (bw / 2);
-            let by = y - (bh / 2);
-
-            let borderColor = isMain ? (isPutLine ? '#00ff88' : '#ff2255') : (isAtm ? '#00f0ff' : (isPositive ? '#00ff88' : (isNegative ? '#ff2255' : '#334155')));
-            let glowColor = borderColor;
-            let textColor = isPositive ? '#00ff88' : (isNegative ? '#ff2255' : '#e2e8f0');
-
-            ctx.fillStyle = 'rgba(8, 13, 22, 0.95)';
-            ctx.strokeStyle = borderColor;
-            ctx.lineWidth = isMain || isAtm ? 1.5 : 1.1;
-            ctx.shadowColor = glowColor;
-            ctx.shadowBlur = isMain ? 8 : (isAtm ? 6 : 3);
-            
-            ctx.beginPath();
-            ctx.roundRect(bx, by, bw, bh, 3);
-            ctx.fill();
-            ctx.stroke();
-
-            ctx.shadowBlur = 0;
-            ctx.fillStyle = textColor;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(text, x, y);
-            ctx.restore();
-        }
-
-        function renderNerveMatrix() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-            const startX = 0;
-            const startY = canvas.height / 2;
-            const endX = canvas.width;
-            const t = Date.now() * 0.0025;
-
-            const callProgMap = [0.30, 0.50, 0.70, 0.38, 0.58, 0.33, 0.53];
-            const putProgMap  = [0.33, 0.53, 0.72, 0.40, 0.60, 0.36, 0.64];
-
-            callNodePositions.forEach((targetY, i) => {
-                let callItem = (streamData && streamData.calls && streamData.calls[i]) ? streamData.calls[i] : null;
-                let isMain = (streamData && streamData.main_res && callItem && callItem.strike === streamData.main_res.strike);
-                let isAtm = (callItem && callItem.is_atm);
-                let isItm = (callItem && callItem.type_tag === "ITM");
-                
-                let lineColor = isMain ? '#ff2255' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : `rgba(0, 255, 136, ${0.30 + (i * 0.08)})`));
-                
-                ctx.beginPath();
-                ctx.lineWidth = isMain ? 3.0 : (isAtm ? 2.4 : 1.4);
-                ctx.strokeStyle = lineColor;
-
-                let waveOffset = Math.sin(t + i * 0.7) * 7;
-                let cp1x = canvas.width * 0.38;
-                let cp1y = startY - 14 - (i * 5) + waveOffset;
-                let cp2x = canvas.width * 0.72;
-                let cp2y = targetY - waveOffset * 0.3;
-
-                ctx.moveTo(startX, startY);
-                ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, endX, targetY);
-                ctx.stroke();
-
-                let pProg = (t * 0.3 + (i * 0.14)) % 1;
-                let px = Math.pow(1 - pProg, 3) * startX + 3 * Math.pow(1 - pProg, 2) * pProg * cp1x + 3 * (1 - pProg) * Math.pow(pProg, 2) * cp2x + Math.pow(pProg, 3) * endX;
-                let py = Math.pow(1 - pProg, 3) * startY + 3 * Math.pow(1 - pProg, 2) * pProg * cp1y + 3 * (1 - pProg) * Math.pow(pProg, 2) * cp2y + Math.pow(pProg, 3) * targetY;
-
-                ctx.beginPath();
-                ctx.fillStyle = isMain ? '#ff2255' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : '#00ff88'));
-                ctx.arc(px, py, isMain ? 3.8 : (isAtm ? 3.0 : 2.0), 0, Math.PI * 2);
-                ctx.fill();
-
-                if (callItem) {
-                    let lxProg = callProgMap[i % callProgMap.length];
-                    let lx = Math.pow(1 - lxProg, 3) * startX + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1x + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * endX;
-                    let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2y + Math.pow(lxProg, 3) * targetY;
-                    
-                    let badgeText = `${callItem.strike} CE: ${callItem.chg_str}`;
-                    drawFloatingOIBadge(lx, ly, badgeText, callItem.chg > 0, callItem.chg < 0, isMain, isAtm, false);
-                }
-            });
-
-            putNodePositions.forEach((targetY, i) => {
-                let putItem = (streamData && streamData.puts && streamData.puts[i]) ? streamData.puts[i] : null;
-                let isMain = (streamData && streamData.main_sup && putItem && putItem.strike === streamData.main_sup.strike);
-                let isAtm = (putItem && putItem.is_atm);
-                let isItm = (putItem && putItem.type_tag === "ITM");
-                
-                let lineColor = isMain ? '#00ff88' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : `rgba(255, 34, 85, ${0.30 + (i * 0.08)})`));
-                
-                ctx.beginPath();
-                ctx.lineWidth = isMain ? 3.0 : (isAtm ? 2.4 : 1.4);
-                ctx.strokeStyle = lineColor;
-
-                let waveOffset = Math.sin(t + i * 0.7) * 7;
-                let cp1x = canvas.width * 0.38;
-                let cp1y = startY + 14 + (i * 5) + waveOffset;
-                let cp2x = canvas.width * 0.72;
-                let cp2y = targetY + waveOffset * 0.3;
-
-                ctx.moveTo(startX, startY);
-                ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, endX, targetY);
-                ctx.stroke();
-
-                let pProg = (t * 0.3 + (i * 0.14)) % 1;
-                let px = Math.pow(1 - pProg, 3) * startX + 3 * Math.pow(1 - pProg, 2) * pProg * cp1x + 3 * (1 - pProg) * Math.pow(pProg, 2) * cp2x + Math.pow(pProg, 3) * endX;
-                let py = Math.pow(1 - pProg, 3) * startY + 3 * Math.pow(1 - pProg, 2) * pProg * cp1y + 3 * (1 - pProg) * Math.pow(pProg, 2) * cp2y + Math.pow(pProg, 3) * targetY;
-
-                ctx.beginPath();
-                ctx.fillStyle = isMain ? '#00ff88' : (isAtm ? '#00f0ff' : (isItm ? '#c084fc' : '#ff2255'));
-                ctx.arc(px, py, isMain ? 3.8 : (isAtm ? 3.0 : 2.0), 0, Math.PI * 2);
-                ctx.fill();
-
-                if (putItem) {
-                    let lxProg = putProgMap[i % putProgMap.length];
-                    let lx = Math.pow(1 - lxProg, 3) * startX + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1x + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2x + Math.pow(lxProg, 3) * endX;
-                    let ly = Math.pow(1 - lxProg, 3) * startY + 3 * Math.pow(1 - lxProg, 2) * lxProg * cp1y + 3 * (1 - lxProg) * Math.pow(lxProg, 2) * cp2y + Math.pow(lxProg, 3) * targetY;
-                    
-                    let badgeText = `${putItem.strike} PE: ${putItem.chg_str}`;
-                    drawFloatingOIBadge(lx, ly, badgeText, putItem.chg > 0, putItem.chg < 0, isMain, isAtm, true);
-                }
-            });
-
-            ctx.beginPath();
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 2.0;
-            ctx.shadowColor = '#ffffff';
-            ctx.shadowBlur = 10;
-            ctx.moveTo(0, startY);
-            ctx.lineTo(canvas.width, startY);
-            ctx.stroke();
-            ctx.shadowBlur = 0;
-
-            requestAnimationFrame(renderNerveMatrix);
         }
 
         fetchStreamData();
         setInterval(fetchStreamData, 3000);
         resize();
-        renderNerveMatrix();
     </script>
 </body>
 </html>
 """
 
+# ==================== PAGE 3: ANGEL ONE MOBILE APP PAPER TRADING ====================
+PAPER_APP_HTML = r"""<!DOCTYPE html>
+<html lang="gu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Angel Trading Pro - Mobile Edition</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --angel-blue: #1e3bef; --angel-dark-bg: #0b0e14; --card-bg: #131722;
+            --border-color: #1e2433; --green: #089981; --red: #f23645;
+            --text-main: #f1f5f9; --text-dim: #94a3b8; --tab-active: #38bdf8;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
+        body { background: var(--angel-dark-bg); color: var(--text-main); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+        .app-header { height: 48px; background: #0f131c; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; padding: 0 14px; }
+        .avatar-circle { width: 28px; height: 28px; border-radius: 50%; background: var(--angel-blue); color: #fff; font-size: 11px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+
+        .app-body { flex: 1; position: relative; overflow-y: auto; }
+        .page-view { display: none; width: 100%; height: 100%; overflow-y: auto; padding-bottom: 65px; }
+        .page-view.active-page { display: block; }
+
+        .bottom-nav { height: 56px; background: #0d111a; border-top: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-around; position: fixed; bottom: 0; left: 0; width: 100%; z-index: 100; }
+        .nav-item { display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text-dim); font-size: 10px; font-weight: 600; text-decoration: none; cursor: pointer; width: 25%; height: 100%; gap: 3px; }
+        .nav-item svg { width: 19px; height: 19px; fill: currentColor; }
+        .nav-item.active { color: var(--tab-active); }
+
+        .strike-list-item { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border-color); background: var(--card-bg); cursor: pointer; }
+        .funds-card { background: linear-gradient(135deg, #172554, #1e1b4b); border: 1px solid #2563eb; border-radius: 10px; padding: 14px; margin: 10px 12px; display: flex; justify-content: space-between; align-items: center; }
+        .position-box { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; margin: 8px 12px; }
+
+        .order-bottom-sheet { position: fixed; bottom: -100%; left: 0; width: 100%; background: #121824; border-top: 2px solid #2962ff; border-radius: 16px 16px 0 0; padding: 16px; z-index: 200; transition: bottom 0.28s ease; }
+        .order-bottom-sheet.open { bottom: 0; }
+        .sheet-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.65); display: none; z-index: 150; }
+        .order-btn-grid { display: flex; gap: 10px; margin-top: 14px; }
+        .btn-order-buy { flex: 1; background: var(--green); color: #fff; padding: 12px; border: none; border-radius: 8px; font-weight: 800; cursor: pointer; }
+        .btn-order-sell { flex: 1; background: var(--red); color: #fff; padding: 12px; border: none; border-radius: 8px; font-weight: 800; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div class="app-header">
+        <div style="display:flex; align-items:center; gap:8px;">
+            <div class="avatar-circle">M</div>
+            <div style="font-size:12px; font-weight:800;">ANGEL ONE PAPER</div>
+        </div>
+        <div style="font-size:11.5px;">
+            <a href="/" style="color:#38bdf8; text-decoration:none; margin-right:8px;">📈 Terminal</a>
+            <a href="/oi-analytics" style="color:#00ff88; text-decoration:none;">⚡ Radar</a>
+        </div>
+    </div>
+
+    <div class="app-body">
+        <!-- WATCHLIST -->
+        <div id="pageWatchlist" class="page-view active-page">
+            <div style="padding:10px 14px 4px; font-size:11.5px; font-weight:800; color:var(--text-dim); display:flex; justify-content:space-between;">
+                <span>NIFTY OPTIONS (1 LOT = 65 QTY)</span>
+                <span>LTP / OI</span>
+            </div>
+            <div id="watchlistContainer"></div>
+        </div>
+
+        <!-- POSITIONS -->
+        <div id="pagePositions" class="page-view">
+            <div class="funds-card">
+                <div>
+                    <div style="font-size:11px; color:#93c5fd;">DEMO FUNDS</div>
+                    <div style="font-size:20px; font-weight:900;" id="posAvailableFunds">₹ 1,00,000.00</div>
+                </div>
+                <div style="text-align:right;">
+                    <div style="font-size:11px; color:#93c5fd;">NET P&L</div>
+                    <div style="font-size:18px; font-weight:900;" id="posTotalPnl">+₹ 0.00</div>
+                    <button onclick="resetFunds()" style="background:#2563eb; border:none; color:#fff; padding:3px 8px; border-radius:4px; font-size:10px; margin-top:4px; cursor:pointer;">RESET ₹1L</button>
+                </div>
+            </div>
+            <div style="padding:4px 14px; font-size:12px; font-weight:800; color:var(--text-dim);">ACTIVE POSITIONS (<span id="posCount">0</span>)</div>
+            <div id="positionsContainer"></div>
+        </div>
+
+        <!-- ORDERS -->
+        <div id="pageOrders" class="page-view">
+            <div style="padding:12px 14px; font-size:13px; font-weight:800; border-bottom:1px solid var(--border-color);">ORDER BOOK</div>
+            <div id="ordersContainer"></div>
+        </div>
+    </div>
+
+    <!-- BOTTOM SHEET -->
+    <div class="sheet-backdrop" id="sheetBackdrop" onclick="closeOrderSheet()"></div>
+    <div class="order-bottom-sheet" id="orderSheet">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div>
+                <div style="font-size:15px; font-weight:900;" id="sheetSym">NIFTY 23800 PE</div>
+                <div style="font-size:11px; color:var(--text-dim);" id="sheetLtpTxt">LTP: ₹ 197.95</div>
+            </div>
+            <span onclick="closeOrderSheet()" style="font-size:20px; cursor:pointer;">&times;</span>
+        </div>
+        <div style="margin-top:14px;">
+            <label style="font-size:11px; color:var(--text-dim);">LOTS (1 Lot = 65 Qty)</label>
+            <input type="number" id="orderLots" value="1" min="1" onchange="updateTotalCost()" style="width:100%; background:#1e2433; border:1px solid #334155; color:#fff; padding:8px; border-radius:6px; font-weight:800; margin-top:4px;">
+        </div>
+        <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:12px;">
+            <span style="color:var(--text-dim);">Total Qty: <b id="sheetTotalQty" style="color:#fff;">65</b> | Margin:</span>
+            <b id="sheetCostTxt" style="color:var(--green);">₹ 12,866.75</b>
+        </div>
+        <div class="order-btn-grid">
+            <button class="btn-order-buy" onclick="submitPaperOrder('BUY')">BUY</button>
+            <button class="btn-order-sell" onclick="submitPaperOrder('SELL')">SELL</button>
+        </div>
+    </div>
+
+    <!-- BOTTOM NAVIGATION -->
+    <div class="bottom-nav">
+        <div class="nav-item active" onclick="switchTab('Watchlist', this)">
+            <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+            <span>Watchlist</span>
+        </div>
+        <div class="nav-item" onclick="switchTab('Positions', this)">
+            <svg viewBox="0 0 24 24"><path d="M21 18v1c0 1.1-.9 2-2 2H5c-1.11 0-2-.9-2-2V5c0-1.1.89-2 2-2h14c1.1 0 2 .9 2 2v1h-9c-1.11 0-2 .9-2 2v8c0 1.1.89 2 2 2h9zm-9-2h10V8H12v8z"/></svg>
+            <span>Positions</span>
+        </div>
+        <div class="nav-item" onclick="switchTab('Orders', this)">
+            <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+            <span>Orders</span>
+        </div>
+    </div>
+
+    <script>
+        let currentTargetStrike = null;
+        function switchTab(tabId, el) {
+            document.querySelectorAll('.page-view').forEach(p => p.classList.remove('active-page'));
+            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+            document.getElementById(`page${tabId}`).classList.add('active-page');
+            el.classList.add('active');
+            if (tabId === 'Positions' || tabId === 'Orders') fetchPaperData();
+        }
+
+        async function fetchMarketData() {
+            try {
+                let res = await fetch('/api/market_data');
+                let d = await res.json();
+                let html = '';
+                if (d.chain) {
+                    d.chain.forEach(s => {
+                        html += `
+                        <div class="strike-list-item" onclick="openOrderSheet('${s.strike} CE', ${s.ltp_ce})">
+                            <div>
+                                <div style="font-weight:800; color:var(--green);">NIFTY ${s.strike} CE</div>
+                                <div style="font-size:10.5px; color:var(--text-dim);">OI: ${s.oi_ce_str} ${s.is_atm ? '• ATM' : ''}</div>
+                            </div>
+                            <div style="text-align:right;">
+                                <div style="font-weight:800; color:var(--green);">₹ ${s.ltp_ce.toFixed(2)}</div>
+                                <div style="font-size:10px; color:var(--text-dim);">Tap (65 Qty)</div>
+                            </div>
+                        </div>
+                        <div class="strike-list-item" onclick="openOrderSheet('${s.strike} PE', ${s.ltp_pe})">
+                            <div>
+                                <div style="font-weight:800; color:var(--red);">NIFTY ${s.strike} PE</div>
+                                <div style="font-size:10.5px; color:var(--text-dim);">OI: ${s.oi_pe_str} ${s.is_atm ? '• ATM' : ''}</div>
+                            </div>
+                            <div style="text-align:right;">
+                                <div style="font-weight:800; color:var(--red);">₹ ${s.ltp_pe.toFixed(2)}</div>
+                                <div style="font-size:10px; color:var(--text-dim);">Tap (65 Qty)</div>
+                            </div>
+                        </div>`;
+                    });
+                    document.getElementById('watchlistContainer').innerHTML = html;
+                }
+            } catch(e) {}
+        }
+
+        function openOrderSheet(sym, price) {
+            currentTargetStrike = { sym: sym, price: price };
+            document.getElementById('sheetSym').innerText = sym;
+            document.getElementById('sheetLtpTxt').innerText = `LTP: ₹ ${price.toFixed(2)}`;
+            updateTotalCost();
+            document.getElementById('sheetBackdrop').style.display = 'block';
+            document.getElementById('orderSheet').classList.add('open');
+        }
+
+        function closeOrderSheet() {
+            document.getElementById('sheetBackdrop').style.display = 'none';
+            document.getElementById('orderSheet').classList.remove('open');
+        }
+
+        function updateTotalCost() {
+            if (!currentTargetStrike) return;
+            let lots = parseInt(document.getElementById('orderLots').value) || 1;
+            let totalQty = lots * 65;
+            document.getElementById('sheetTotalQty').innerText = totalQty;
+            let total = (totalQty * currentTargetStrike.price).toFixed(2);
+            document.getElementById('sheetCostTxt').innerText = `₹ ${total}`;
+        }
+
+        async function submitPaperOrder(side) {
+            if (!currentTargetStrike) return;
+            let lots = parseInt(document.getElementById('orderLots').value) || 1;
+            let qty = lots * 65;
+            let price = currentTargetStrike.price;
+            try {
+                let res = await fetch('/api/paper/order', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ symbol: currentTargetStrike.sym, side: side, qty: qty, price: price })
+                });
+                let d = await res.json();
+                alert(d.message);
+                closeOrderSheet();
+                fetchPaperData();
+            } catch(e) {}
+        }
+
+        async function fetchPaperData() {
+            try {
+                let res = await fetch('/api/paper/state');
+                let d = await res.json();
+                document.getElementById('posAvailableFunds').innerText = `₹ ${d.available_funds.toLocaleString()}`;
+                let pnlColor = d.total_pnl >= 0 ? 'var(--green)' : 'var(--red)';
+                document.getElementById('posTotalPnl').innerHTML = `<span style="color:${pnlColor};">${d.total_pnl >= 0 ? '+' : ''}₹ ${d.total_pnl.toFixed(2)}</span>`;
+                document.getElementById('posCount').innerText = d.positions.length;
+
+                let pHtml = '';
+                if (d.positions.length === 0) {
+                    pHtml = '<div style="text-align:center; padding:30px; color:var(--text-dim); font-size:12px;">Haji koi position nathi. Watchlist mathi buy karo!</div>';
+                } else {
+                    d.positions.forEach(p => {
+                        let col = p.pnl >= 0 ? 'var(--green)' : 'var(--red)';
+                        pHtml += `
+                        <div class="position-box">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <div>
+                                    <div style="font-weight:800; font-size:13px;">${p.symbol}</div>
+                                    <div style="font-size:10.5px; color:var(--text-dim);">Qty: ${p.qty} | Buy @ ₹${p.entry_price.toFixed(2)}</div>
+                                </div>
+                                <div style="text-align:right;">
+                                    <div style="font-size:14px; font-weight:900; color:${col};">${p.pnl >= 0 ? '+' : ''}₹ ${p.pnl.toFixed(2)}</div>
+                                    <button onclick="closePos(${p.id})" style="background:#334155; color:#fff; border:none; padding:4px 8px; border-radius:4px; font-size:11px; cursor:pointer;">EXIT</button>
+                                </div>
+                            </div>
+                        </div>`;
+                    });
+                }
+                document.getElementById('positionsContainer').innerHTML = pHtml;
+
+                let oHtml = '';
+                if (d.orders.length === 0) {
+                    oHtml = '<div style="text-align:center; padding:30px; color:var(--text-dim); font-size:12px;">Haji koi trade nathi.</div>';
+                } else {
+                    d.orders.forEach(o => {
+                        oHtml += `
+                        <div class="strike-list-item">
+                            <div>
+                                <div style="font-weight:800; font-size:12px;">${o.symbol} (${o.side})</div>
+                                <div style="font-size:10px; color:var(--text-dim);">${o.time} • Qty: ${o.qty} @ ₹${o.price.toFixed(2)}</div>
+                            </div>
+                            <div style="text-align:right; font-weight:800; font-size:12px; color:${o.pnl >= 0 ? 'var(--green)' : 'var(--red)'};">
+                                ${o.pnl !== 0 ? ((o.pnl > 0 ? '+' : '') + '₹' + o.pnl.toFixed(2)) : 'EXECUTED'}
+                            </div>
+                        </div>`;
+                    });
+                }
+                document.getElementById('ordersContainer').innerHTML = oHtml;
+            } catch(e) {}
+        }
+
+        async function closePos(id) {
+            await fetch('/api/paper/close', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pos_id: id })
+            });
+            fetchPaperData();
+        }
+
+        async function resetFunds() {
+            if (confirm("Demo Balance Reset karvu chhe?")) {
+                await fetch('/api/paper/reset', { method: 'POST' });
+                fetchPaperData();
+            }
+        }
+
+        fetchMarketData();
+        fetchPaperData();
+        setInterval(fetchMarketData, 3500);
+        setInterval(fetchPaperData, 3500);
+    </script>
+</body>
+</html>
+"""
+
+# ==================== ROUTE BINDINGS (3 ALAG ALAG PAGES) ====================
 @app.get("/", response_class=HTMLResponse)
 def index():
     return TERMINAL_HTML
@@ -1686,3 +1563,7 @@ def index():
 @app.get("/oi-analytics", response_class=HTMLResponse)
 def oi_page():
     return OI_DASHBOARD_HTML
+
+@app.get("/paper-trading", response_class=HTMLResponse)
+def paper_page():
+    return PAPER_APP_HTML
