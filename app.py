@@ -1025,9 +1025,9 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 
         .stream-workspace { flex: 1; display: flex; width: 100%; min-height: calc(100vh - 165px); position: relative; }
         .matrix-canvas-box { flex: 1; position: relative; background: #040609; overflow: hidden; }
-        #streamCanvas { width: 100%; height: 100%; display: block; }
+        #streamCanvas { width: 100%; height: 100%; display: block; position: absolute; top: 0; left: 0; }
 
-        .strike-nodes-col { width: 440px; max-width: 49%; background: #080d16; border-left: 1.5px solid #142033; display: flex; flex-direction: column; justify-content: space-between; padding: 4px 8px; }
+        .strike-nodes-col { width: 440px; max-width: 49%; background: #080d16; border-left: 1.5px solid #142033; display: flex; flex-direction: column; justify-content: space-between; padding: 4px 8px; z-index: 5; }
         .strike-group-container { flex: 1; display: flex; flex-direction: column; justify-content: space-around; gap: 2px; }
         .strike-card-node { background: #0d1522; border: 1.2px solid #1f2f45; border-radius: 5px; padding: 4px 8px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
         .node-call { border-left: 4px solid var(--green-glow); }
@@ -1166,11 +1166,10 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         const ctx = canvas.getContext('2d');
 
         let streamData = null;
-        let callNodePositions = [];
-        let putNodePositions = [];
         let isAudioEnabled = true;
         let audioCtx = null;
         let lastAlertSignal = "";
+        let animProgress = 0;
 
         function initAudio() {
             if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -1241,10 +1240,125 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         document.getElementById('geminiInput').addEventListener('keypress', (e) => { if (e.key === 'Enter') askGeminiCopilot(); });
 
         function resize() {
-            canvas.width = container.clientWidth;
-            canvas.height = container.clientHeight;
+            if (container) {
+                canvas.width = container.clientWidth;
+                canvas.height = container.clientHeight;
+            }
         }
         window.addEventListener('resize', resize);
+
+        // ================== CURVE LINES & PARTICLES RENDERER ==================
+        function drawCurvesAndMatrix() {
+            if (!ctx || canvas.width === 0) {
+                requestAnimationFrame(drawCurvesAndMatrix);
+                return;
+            }
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            animProgress = (animProgress + 0.005) % 1.0;
+
+            const cRect = container.getBoundingClientRect();
+            const startX = 2; // Left side focal point
+            
+            // Spot axis divider center Y
+            const spotEl = document.getElementById('spotCenterPill');
+            let startY = canvas.height / 2;
+            if (spotEl) {
+                const sR = spotEl.getBoundingClientRect();
+                startY = (sR.top + sR.bottom) / 2 - cRect.top;
+            }
+
+            // Draw Spot Horizontal Guide
+            ctx.beginPath();
+            ctx.moveTo(startX, startY);
+            ctx.lineTo(canvas.width, startY);
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            // Helper to get Cubic Bezier point
+            function getBezierPoint(t, p0, p1, p2, p3) {
+                const cx = 3 * (p1.x - p0.x);
+                const bx = 3 * (p2.x - p1.x) - cx;
+                const ax = p3.x - p0.x - cx - bx;
+
+                const cy = 3 * (p1.y - p0.y);
+                const by = 3 * (p2.y - p1.y) - cy;
+                const ay = p3.y - p0.y - cy - by;
+
+                const xt = ax * Math.pow(t, 3) + bx * Math.pow(t, 2) + cx * t + p0.x;
+                const yt = ay * Math.pow(t, 3) + by * Math.pow(t, 2) + cy * t + p0.y;
+                return { x: xt, y: yt };
+            }
+
+            // Draw line to node
+            function drawConnection(nodeId, item, isCE) {
+                const el = document.getElementById(nodeId);
+                if (!el) return;
+                const elR = el.getBoundingClientRect();
+                const endX = canvas.width;
+                const endY = (elR.top + elR.bottom) / 2 - cRect.top;
+
+                const p0 = { x: startX, y: startY };
+                const p1 = { x: canvas.width * 0.45, y: startY };
+                const p2 = { x: canvas.width * 0.55, y: endY };
+                const p3 = { x: endX, y: endY };
+
+                // Color based on OI Change
+                let color = item.chg > 0 ? "#00ff88" : "#ff2255";
+                if (item.is_atm) color = "#00f0ff";
+
+                // Draw Bezier Curve
+                ctx.beginPath();
+                ctx.moveTo(p0.x, p0.y);
+                ctx.bezierCurveTo(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y);
+                ctx.strokeStyle = color;
+                ctx.lineWidth = item.is_atm ? 2.5 : 1.6;
+                ctx.shadowColor = color;
+                ctx.shadowBlur = 8;
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+
+                // Draw Moving Particle
+                const t = (animProgress + (item.strike % 7) * 0.14) % 1.0;
+                const pt = getBezierPoint(t, p0, p1, p2, p3);
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, 3, 0, Math.PI * 2);
+                ctx.fillStyle = "#ffffff";
+                ctx.shadowColor = color;
+                ctx.shadowBlur = 6;
+                ctx.fill();
+                ctx.shadowBlur = 0;
+
+                // Draw Mid-point Strike Pill Tag
+                const midPt = getBezierPoint(0.5, p0, p1, p2, p3);
+                const tagText = `${item.strike} ${isCE ? 'CE' : 'PE'}: ${item.chg_str}`;
+                ctx.font = "bold 9px monospace";
+                const txtW = ctx.measureText(tagText).width;
+
+                ctx.fillStyle = "rgba(10, 16, 26, 0.9)";
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.roundRect(midPt.x - txtW / 2 - 4, midPt.y - 7, txtW + 8, 14, 3);
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.fillStyle = color;
+                ctx.fillText(tagText, midPt.x - txtW / 2, midPt.y + 3);
+            }
+
+            if (streamData) {
+                if (streamData.calls) {
+                    streamData.calls.forEach((c, idx) => drawConnection(`cNode_${idx}`, c, true));
+                }
+                if (streamData.puts) {
+                    streamData.puts.forEach((p, idx) => drawConnection(`pNode_${idx}`, p, false));
+                }
+            }
+
+            requestAnimationFrame(drawCurvesAndMatrix);
+        }
 
         async function fetchStreamData() {
             try {
@@ -1305,6 +1419,10 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             } catch(e) {}
         }
 
+        window.addEventListener('DOMContentLoaded', () => {
+            resize();
+            requestAnimationFrame(drawCurvesAndMatrix);
+        });
         fetchStreamData();
         setInterval(fetchStreamData, 3000);
         resize();
@@ -1320,3 +1438,7 @@ def index():
 @app.get("/oi-analytics", response_class=HTMLResponse)
 def oi_page():
     return OI_DASHBOARD_HTML
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
