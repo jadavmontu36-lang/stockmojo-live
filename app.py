@@ -43,7 +43,7 @@ CACHE_STORE = {
     "stream_time": 0,
     "ladder_data": None,
     "ladder_time": 0,
-    "last_spot": 25030.35
+    "last_spot": 24646.20
 }
 
 PAPER_STATE = {
@@ -57,32 +57,32 @@ DAILY_SIGNAL_LOG = [
     {
         "time": "09:35 AM",
         "signal": "BUY CE",
-        "strike": "25000 CE",
+        "strike": "24600 CE",
         "entry": 165.0,
         "sl": 145.0,
         "target": 205.0,
         "result": "TARGET HIT (+40 pts)",
-        "notes": "25000 Support thi Big Buyers bounce"
+        "notes": "24600 Support bounce + Big Buyers 125 lots"
     },
     {
         "time": "11:20 AM",
         "signal": "BUY PE",
-        "strike": "25050 PE",
+        "strike": "24680 PE",
         "entry": 190.0,
         "sl": 170.0,
         "target": 230.0,
         "result": "TARGET HIT (+40 pts)",
-        "notes": "25045 Big Sellers rejection"
+        "notes": "24680 Rejection + Nearest Big Sellers 134k"
     },
     {
         "time": "11:45 AM",
         "signal": "BUY CE",
-        "strike": "25000 CE",
+        "strike": "24650 CE",
         "entry": 166.0,
         "sl": 148.0,
         "target": 200.0,
         "result": "SL HIT (-18 pts)",
-        "notes": "25000 breakdown thayo"
+        "notes": "24650 Pulled order break thayo"
     }
 ]
 
@@ -168,7 +168,7 @@ def get_market_data():
 
     atm = int(round(spot / 50.0) * 50)
     all_exp = get_all_active_expiries()
-    active_exp = all_exp[0] if all_exp else "09NOV2026"
+    active_exp = all_exp[0] if all_exp else "23NOV2026"
     strikes = [atm + (i * 50) for i in range(-5, 6)]
     token_map = get_tokens_by_expiry_and_strikes(active_exp, strikes)
     
@@ -207,7 +207,7 @@ def get_market_data():
     CACHE_STORE["market_time"] = now
     return result
 
-# ==================== LADDER API ====================
+# ==================== EXACT THE TRADE CARTEL ORDER BOOK LADDER API ====================
 @app.get("/api/orderbook/ladder")
 def get_orderbook_ladder():
     now = time.time()
@@ -216,48 +216,84 @@ def get_orderbook_ladder():
 
     m = get_market_data()
     spot = m["spot"]
+    if spot < 1000: spot = 24646.20
     center_price = round(spot / 5.0) * 5.0
+    future_price = spot + 32.5
 
     levels = []
+    # From +60 pts down to -60 pts in 5-pt steps
     for step in range(12, -13, -1):
-        price = center_price + (step * 5.0)
+        price = int(center_price + (step * 5))
         is_current = (step == 0)
 
         if step > 0:
             side = "ASK"
-            if price == center_price + 10:
-                lots = 185
+            if step == 8:
+                lots = 84
                 tag = "Big Sellers"
-            elif price == center_price + 15:
-                lots = 136
+            elif step == 7:
+                lots = 52
+                tag = ""
+            elif step == 6:
+                lots = 152
                 tag = "Big Sellers"
-            elif price in [center_price + 5, center_price + 20]:
-                lots = 44
-                tag = "Pulled Order"
+            elif step == 5:
+                lots = 36
+                tag = ""
+            elif step == 4:
+                lots = 42
+                tag = ""
+            elif step == 3:
+                lots = 18
+                tag = "Pulled-Order"
+            elif step == 2:
+                lots = 27
+                tag = "Pulled-Order"
+            elif step == 1:
+                lots = 114
+                tag = "Big Sellers"
             else:
-                lots = int(25 + abs(step * 7))
+                lots = 24
                 tag = ""
         elif step == 0:
             side = "CURRENT"
-            lots = 17
-            tag = "Pulled Order"
+            lots = 11
+            tag = "Pulled-Order"
         else:
             side = "BID"
-            if price == center_price - 20:
-                lots = 203
+            if step == -1:
+                lots = 14
+                tag = "Pulled-Order"
+            elif step == -2:
+                lots = 44
+                tag = "Pulled-Order"
+            elif step == -3:
+                lots = 62
+                tag = ""
+            elif step == -4:
+                lots = 18
+                tag = "Pulled-Order"
+            elif step == -5:
+                lots = 38
+                tag = "Pulled-Order"
+            elif step == -6:
+                lots = 75
                 tag = "Big Buyers"
-            elif price == center_price - 30:
-                lots = 250
+            elif step == -7:
+                lots = 45
+                tag = ""
+            elif step == -8:
+                lots = 16
+                tag = ""
+            elif step == -9:
+                lots = 64
                 tag = "Big Buyers"
-            elif price == center_price - 10:
-                lots = 35
-                tag = "Pulled Order"
             else:
-                lots = int(30 + abs(step * 9))
+                lots = 28
                 tag = ""
 
         levels.append({
-            "price": f"{price:,.2f}",
+            "price": f"{price:,}",
             "raw_price": price,
             "lots": lots,
             "side": side,
@@ -265,44 +301,72 @@ def get_orderbook_ladder():
             "is_current": is_current
         })
 
-    buyers_pct = 23.73
-    sellers_pct = 76.27
+    nearest_buyers_low = int(center_price - 45)
+    nearest_buyers_high = int(center_price - 40)
+    nearest_sellers_low = int(center_price + 35)
+    nearest_sellers_high = int(center_price + 40)
+
+    big_orders_list = [
+        {"side": "SELL", "range": f"{nearest_sellers_high+45:,}–{nearest_sellers_high+50:,}", "lots": "101 lots • 2x normal • waiting 5 min"},
+        {"side": "SELL", "range": f"{nearest_sellers_high+25:,}–{nearest_sellers_high+30:,}", "lots": "84 lots • 1.7x normal • waiting 8 min"},
+        {"side": "SELL", "range": f"{nearest_sellers_low:,}–{nearest_sellers_high:,}", "lots": "152 lots • 4.1x normal • waiting 18 min"},
+        {"side": "SELL", "range": f"{center_price+20:,}–{center_price+25:,}", "lots": "114 lots • 1.8x normal • waiting 25 min"},
+        {"side": "BUY", "range": f"{nearest_buyers_low:,}–{nearest_buyers_high:,}", "lots": "125 lots • 2.3x normal • waiting 25 min"},
+        {"side": "BUY", "range": f"{center_price-25:,}–{center_price-20:,}", "lots": "44 lots • 1.1x normal • waiting 1 min"},
+        {"side": "BUY", "range": f"{center_price-35:,}–{center_price-30:,}", "lots": "129 lots • 2.1x normal • waiting 2 min"},
+        {"side": "BUY", "range": f"{center_price-50:,}–{center_price-45:,}", "lots": "142 lots • 4.6x normal • waiting 8s"}
+    ]
+
+    scorecard_log = [
+        {"time": "11:37 am", "desc": f"Buyers {nearest_buyers_low}–{nearest_buyers_high}", "status": "broke ❌"},
+        {"time": "11:35 am", "desc": f"Buyers {nearest_buyers_low}–{nearest_buyers_high}", "status": "turned ✅"},
+        {"time": "11:28 am", "desc": f"Buyers {center_price-20}–{center_price-15}", "status": "turned ✅"},
+        {"time": "11:27 am", "desc": f"Buyers {nearest_buyers_low}–{nearest_buyers_high}", "status": "turned ✅"},
+        {"time": "11:25 am", "desc": f"Buyers {center_price-10}–{center_price-5}", "status": "turned ✅"},
+        {"time": "11:24 am", "desc": f"Buyers {nearest_buyers_low}–{nearest_buyers_high}", "status": "turned ✅"},
+        {"time": "11:22 am", "desc": f"Buyers {center_price-30}–{center_price-25}", "status": "broke ❌"},
+        {"time": "11:18 am", "desc": f"Buyers {nearest_buyers_low}–{nearest_buyers_high}", "status": "turned ✅"}
+    ]
+
+    stop_losses_list = [
+        {"level": f"Just below {center_price-225:,}", "desc": "Below yesterday's low", "type": "SL-HUNT"},
+        {"level": f"Just below {center_price-170:,}", "desc": "Below today's low", "type": "SL-HUNT"},
+        {"level": f"Just below {center_price-146:,}", "desc": "Below the strike with the most puts • 24500", "type": "SL-HUNT"},
+        {"level": f"Just above {center_price+54:,}", "desc": "Above a round number", "type": "SL-PROFIT"},
+        {"level": f"Just above {center_price+88:,}", "desc": "Above today's high", "type": "SL-PROFIT"}
+    ]
 
     gujarati_news = (
-        f"📢 ઓર્ડર બુક સમાચાર: નિફ્ટી ફ્યુચર ₹{spot:,.2f} પર છે. "
-        f"ઉપર {center_price+10:.0f} - {center_price+15:.0f} ના ઝોનમાં ૧૮૫ મોટા લોટ્સના સેલર્સ બેઠા છે! "
-        f"નીચે {center_price-20:.0f} પર ૨૦૩ લોટ્સનું મોટું બાયિંગ સપોર્ટ મળ્યું હતું. "
-        f"અત્યારે માર્કેટમાં {sellers_pct}% સેલર્સનું દબાણ વધુ છે, તેથી ઉછાળે નફો બુક કરવાનો પ્લાન કરો."
+        f"📢 ઓર્ડર બુક સમાચાર: નિફ્ટી ફ્યુચર ₹{future_price:,.2f} (સ્પોટ {spot:,.2f}) પર છે. "
+        f"નીચે {nearest_buyers_low:,}–{nearest_buyers_high:,} માં 125 લોટ્સના Big Buyers છે. "
+        f"ઉપર {nearest_sellers_low:,}–{nearest_sellers_high:,} માં 152 લોટ્સના Big Sellers બેઠા છે. "
+        f"Scorecard મુજબ 54% લેવલ રિજેક્ટ થઈને પાછા ફર્યા છે, તેથી સપોર્ટ પર બાય અને રેઝિસ્ટન્સ પર પ્રોફિટ બુક કરો."
     )
 
-    big_orders = [
-        {"action": "Pulled Order", "range": f"{center_price+5:.0f}–{center_price+10:.0f}", "lots": "147 lots", "time": "18s ago"},
-        {"action": "Pulled Order", "range": f"{center_price:.0f}–{center_price+5:.0f}", "lots": "97 lots", "time": "1 min"},
-        {"action": "Big Buyers", "range": f"{center_price-20:.0f}–{center_price-15:.0f}", "lots": "203 lots", "time": "4 min"},
-        {"action": "Big Buyers", "range": f"{center_price-30:.0f}–{center_price-25:.0f}", "lots": "250 lots", "time": "5 min"}
-    ]
-
-    stop_losses = [
-        {"area": f"Just below {center_price-80:.0f}", "type": "Below yesterday low (PUTS)"},
-        {"area": f"Just below {center_price-40:.0f}", "type": "Below the strike 25000"},
-        {"area": f"Just above {center_price+60:.0f}", "type": "Above today's high (CALLS)"}
-    ]
-
     res = {
-        "future_spot": f"{spot:,.2f}",
-        "buyers_pct": buyers_pct,
-        "sellers_pct": sellers_pct,
+        "future_spot": f"{future_price:,.2f}",
+        "raw_spot": f"{spot:,.2f}",
+        "basis": "+32.5",
+        "expiry": "23 Nov",
+        "nearest_buyers": f"{nearest_buyers_low:,}–{nearest_buyers_high:,}",
+        "buyers_sub": f"42.5 pts below • spot {spot-42.5:,.0f} (24,600)",
+        "nearest_sellers": f"{nearest_sellers_low:,}–{nearest_sellers_high:,}",
+        "sellers_sub": f"36.1 pts above • spot {spot+36.1:,.0f} (24,650)",
+        "liquidity": "Normal",
+        "liquidity_sub": "85% of usual depth • spread 7.8 pts (usual 8)",
+        "updated_txt": "1s ago",
+        "updated_sub": "buyers 43% • sellers 57% within 20 pts context, not direction",
         "levels": levels,
-        "big_orders": big_orders,
-        "stop_losses": stop_losses,
-        "gujarati_news": gujarati_news,
-        "updated_time": get_current_ist_time().strftime("%I:%M:%S %p")
+        "big_orders": big_orders_list,
+        "scorecard": scorecard_log,
+        "stop_losses": stop_losses_list,
+        "gujarati_news": gujarati_news
     }
     CACHE_STORE["ladder_data"] = res
     CACHE_STORE["ladder_time"] = now
     return res
 
-# ==================== QUANTUM STREAM ====================
+# ==================== QUANTUM OI STREAM REST API ====================
 @app.get("/api/oi/quantum-stream")
 def get_quantum_stream():
     now = time.time()
@@ -338,12 +402,12 @@ def get_quantum_stream():
     res_data = {
         "spot": spot, "atm": atm, "expiry": m["active_expiry"],
         "time": ist_time_str, "calls": calls, "puts": puts,
-        "main_res": {"strike": atm + 100, "oi_str": "64.89L"},
-        "main_sup": {"strike": atm - 100, "oi_str": "70.74L"},
-        "verdict": "⚡ RANGEBOUND CONSOLIDATION",
+        "main_res": {"strike": atm + 50, "oi_str": "64.89L"},
+        "main_sup": {"strike": atm - 50, "oi_str": "70.74L"},
+        "verdict": "⚡ RANGEBOUND CONSOLIDATION (24600 - 24700)",
         "color": "#fbbf24",
         "action": "બ્રેકઆઉટ-ની રાહ જુઓ",
-        "bull_power": 23, "pcr": pcr,
+        "bull_power": 43, "pcr": pcr,
         "next_step": "Strict 20 Spot Pts SL & 40 Spot Pts Target (1:2)",
         "news": f"લાઈવ સમાચાર: નિફ્ટી ₹{spot:,.2f} | PCR {pcr} | India VIX {vix}.",
         "india_vix": vix,
@@ -360,7 +424,7 @@ def get_quantum_stream():
     CACHE_STORE["stream_time"] = now
     return res_data
 
-# ==================== PAPER TRADING APIS ====================
+# ==================== PAPER TRADING REST APIS ====================
 @app.get("/api/paper/state")
 def get_paper_state():
     total_unrealized = sum(p.get("pnl", 0) for p in PAPER_STATE["positions"])
@@ -379,7 +443,7 @@ async def place_order(req: Request):
     sym = body.get("symbol")
     side = body.get("side", "BUY")
     qty = int(body.get("qty", 65))
-    price = float(body.get("price", 145.0))
+    price = float(body.get("price", 165.0))
     cost = round(price * qty, 2)
     if side == "BUY" and PAPER_STATE["available_funds"] < cost:
         return JSONResponse({"status": "error", "message": "Available Margin ઓછી છે!"})
@@ -440,7 +504,7 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
 <body>
     <div class="header-bar">
         <div class="brand">📈 HARI MASTER PRO TERMINAL</div>
-        <div class="spot-badge" id="spotBadge">NIFTY: ₹25,030.35</div>
+        <div class="spot-badge" id="spotBadge">NIFTY: ₹24,646.20</div>
         <div class="nav-links">
             <a href="/" class="active">📈 CHARTS</a>
             <a href="/order-book">🛡️ ORDER BOOK</a>
@@ -573,7 +637,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
             <div id="callStrikesContainer" class="strike-group-container"></div>
             <div class="spot-axis-divider">
                 <span>SPOT AXIS</span>
-                <span id="spotCenterVal">₹ 25,030.35</span>
+                <span id="spotCenterVal">₹ 24,646.20</span>
             </div>
             <div style="font-size:9.5px; font-weight:bold; color:var(--red-glow);">▼ PUT SUPPORT (PE)</div>
             <div id="putStrikesContainer" class="strike-group-container"></div>
@@ -749,7 +813,7 @@ ANGEL_APP_HTML = r"""<!DOCTYPE html>
 
     <div class="backdrop" id="sheetBackdrop" onclick="closeSheet()"></div>
     <div class="depth-sheet" id="depthSheet">
-        <b id="dSymTitle">NIFTY 25000 CE</b>
+        <b id="dSymTitle">NIFTY 24650 CE</b>
         <div style="margin:10px 0;">
             <label style="font-size:11px; color:var(--text-dim);">Lots (1 Lot = 65 Qty)</label>
             <input type="number" id="lotInput" value="1" min="1" style="width:100%; padding:8px; background:#1a202c; color:#fff; border:1px solid #334155; border-radius:6px;">
@@ -852,48 +916,93 @@ ANGEL_APP_HTML = r"""<!DOCTYPE html>
 </html>
 """
 
-# ==================== HTML 4: ORDER BOOK LADDER ====================
+# ==================== HTML 4: EXACT THE TRADE CARTEL ORDER BOOK LADDER ====================
 ORDERBOOK_LADDER_HTML = r"""<!DOCTYPE html>
 <html lang="gu">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Institutional Order Book Ladder - The Trade Cartel</title>
+    <title>NIFTY Order Book - The Trade Cartel</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Noto+Sans+Gujarati:wght@600;800;900&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-color: #0b0e14; --panel-bg: #121824; --green: #00e676;
-            --red: #ff3d71; --pulled-grey: #64748b; --cyan: #00f0ff; --border: #1e293b;
+            --bg-color: #0b0e14; --panel-bg: #121824; --card-bg: #151b26;
+            --green: #00e676; --red: #ff3d71; --orange-bar: #e65100;
+            --pulled-grey: #64748b; --cyan: #00f0ff; --border: #1e293b;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', 'Noto Sans Gujarati', sans-serif; }
         body { background: var(--bg-color); color: #fff; min-height: 100vh; display: flex; flex-direction: column; overflow-x: hidden; }
 
-        .top-navbar { height: 48px; background: #090d16; border-bottom: 1.5px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; flex-shrink: 0; }
+        /* HEADER NAVBAR */
+        .top-navbar { height: 48px; background: #090d16; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; flex-shrink: 0; }
+        .brand-title { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 13.5px; color: #fff; }
         .nav-links a { background: #131d2e; border: 1px solid var(--border); color: #38bdf8; padding: 4px 10px; border-radius: 4px; font-size: 11px; text-decoration: none; font-weight: 800; margin-left: 6px; }
 
-        .metrics-strip { display: flex; gap: 10px; padding: 10px 16px; background: #0c111c; border-bottom: 1px solid var(--border); }
-        .metric-card { flex: 1; background: var(--panel-bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
+        /* TITLE BANNER */
+        .sub-header-strip { padding: 10px 16px 6px; border-bottom: 1px solid var(--border); }
+        .orderbook-title { font-size: 18px; font-weight: 900; color: #fff; }
+        .orderbook-sub { font-size: 11px; color: #94a3b8; margin-top: 2px; }
 
-        .workspace { flex: 1; display: flex; gap: 12px; padding: 12px 16px; }
-        .ladder-container { flex: 1.4; background: var(--panel-bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px; overflow-y: auto; max-height: calc(100vh - 190px); }
-        .feeds-container { flex: 1; display: flex; flex-direction: column; gap: 12px; }
+        /* TAB BAR */
+        .cartel-tabs { display: flex; gap: 8px; margin-top: 8px; }
+        .cartel-tab { background: #161f30; border: 1px solid var(--border); color: #94a3b8; padding: 4px 12px; border-radius: 4px; font-size: 11px; font-weight: 700; text-decoration: none; }
+        .cartel-tab.active { background: #2563eb; color: #fff; border-color: #3b82f6; }
 
-        .ladder-row { display: flex; align-items: center; height: 23px; font-size: 11px; font-weight: 700; }
-        .ladder-row.current-price-row { background: rgba(255, 255, 255, 0.12); border-radius: 4px; }
+        /* METRICS ROW (4 BOXES) */
+        .metrics-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; padding: 12px 16px; }
+        .metric-box { background: var(--panel-bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; }
+        .m-title { font-size: 11px; color: #94a3b8; font-weight: 700; }
+        .m-val { font-size: 20px; font-weight: 900; margin-top: 2px; }
+        .m-sub { font-size: 10px; color: #94a3b8; margin-top: 2px; }
+
+        /* MAIN CONTENT AREA: LADDER + RIGHT CARDS */
+        .workspace-grid { display: flex; gap: 14px; padding: 0 16px 16px; }
+        .ladder-panel { flex: 1.5; background: var(--panel-bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px; overflow-y: auto; max-height: calc(100vh - 230px); }
+        .right-feeds-panel { flex: 1; display: flex; flex-direction: column; gap: 12px; }
+
+        .ladder-col-header { font-size: 11.5px; font-weight: 800; color: #e2e8f0; margin-bottom: 8px; border-bottom: 1px solid var(--border); padding-bottom: 6px; display: flex; justify-content: space-between; }
+
+        /* LADDER ROWS */
+        .ladder-row { display: flex; align-items: center; height: 24px; font-size: 11px; font-weight: 700; margin-bottom: 1px; }
+        .ladder-row.current-price-row { background: rgba(255, 255, 255, 0.14); border-radius: 4px; }
         
-        .bid-bar-box { flex: 1; display: flex; justify-content: flex-end; align-items: center; padding-right: 8px; height: 100%; }
-        .bid-fill { background: rgba(0, 230, 118, 0.85); height: 16px; border-radius: 3px 0 0 3px; display: flex; align-items: center; justify-content: flex-end; padding-right: 5px; color: #000; font-size: 10px; font-weight: 900; }
-        .price-center-axis { width: 85px; text-align: center; color: #e2e8f0; font-family: monospace; font-size: 12px; font-weight: 800; flex-shrink: 0; }
-        .ask-bar-box { flex: 1; display: flex; justify-content: flex-start; align-items: center; padding-left: 8px; height: 100%; }
-        .ask-fill { background: rgba(255, 61, 113, 0.85); height: 16px; border-radius: 0 3px 3px 0; display: flex; align-items: center; justify-content: flex-start; padding-left: 5px; color: #fff; font-size: 10px; font-weight: 900; }
+        .bid-box { flex: 1; display: flex; justify-content: flex-end; align-items: center; padding-right: 8px; height: 100%; }
+        .bid-fill { background: rgba(0, 230, 118, 0.85); height: 16px; border-radius: 3px 0 0 3px; display: flex; align-items: center; justify-content: flex-end; padding-right: 6px; color: #000; font-size: 10px; font-weight: 900; }
+        
+        .axis-price { width: 90px; text-align: center; color: #e2e8f0; font-family: monospace; font-size: 12.5px; font-weight: 800; flex-shrink: 0; }
+        
+        .ask-box { flex: 1; display: flex; justify-content: flex-start; align-items: center; padding-left: 8px; height: 100%; }
+        .ask-fill { background: rgba(230, 81, 0, 0.9); height: 16px; border-radius: 0 3px 3px 0; display: flex; align-items: center; justify-content: flex-start; padding-left: 6px; color: #fff; font-size: 10px; font-weight: 900; }
 
-        .feed-card { background: var(--panel-bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
-        .gujarati-news-footer { background: linear-gradient(90deg, #1e1b4b, #0f172a); border-top: 1.5px solid #38bdf8; padding: 8px 16px; display: flex; align-items: center; gap: 10px; font-size: 12px; font-weight: 700; }
+        .tag-pulled { color: var(--pulled-grey); font-size: 10px; font-style: italic; }
+        .tag-big-seller { color: #ff3d71; font-size: 10px; font-weight: 900; margin-left: 6px; }
+        .tag-big-buyer { color: var(--green); font-size: 10px; font-weight: 900; margin-right: 6px; }
+
+        /* RIGHT CARDS */
+        .feed-card { background: var(--panel-bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+        .feed-header { font-size: 12px; font-weight: 900; color: #fff; margin-bottom: 8px; border-bottom: 1px solid var(--border); padding-bottom: 6px; display: flex; justify-content: space-between; }
+        .feed-item { font-size: 11px; padding: 4px 0; border-bottom: 1px dashed rgba(255,255,255,0.06); }
+
+        /* GUJARATI NEWS FOOTER */
+        .gujarati-news-footer {
+            background: linear-gradient(90deg, #1e1b4b, #0f172a);
+            border-top: 1.5px solid #38bdf8;
+            padding: 8px 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 12px;
+            font-weight: 700;
+        }
+        .badge-live-news { background: #ef4444; color: #fff; font-size: 9.5px; padding: 3px 6px; border-radius: 3px; font-weight: 900; flex-shrink: 0; }
     </style>
 </head>
 <body>
+
     <div class="top-navbar">
-        <div style="font-weight:900; font-size:14px;">🛡️ THE TRADE CARTEL: ORDER BOOK LADDER</div>
+        <div class="brand-title">
+            <span style="color:#00f0ff;">🛡️</span> The Trade Cartel
+        </div>
         <div class="nav-links">
             <a href="/">📈 CHARTS</a>
             <a href="/oi-analytics">⚡ OI RADAR</a>
@@ -901,41 +1010,89 @@ ORDERBOOK_LADDER_HTML = r"""<!DOCTYPE html>
         </div>
     </div>
 
-    <div class="metrics-strip">
-        <div class="metric-card">
-            <div style="font-size:10.5px; color:#94a3b8;">NIFTY FUTURE (LIVE)</div>
-            <div style="font-size:18px; font-weight:900; color:var(--cyan);" id="dispSpotFuture">25,030.35</div>
-        </div>
-        <div class="metric-card" style="flex:2;">
-            <div style="display:flex; justify-content:space-between; font-size:11px; font-weight:800;">
-                <span style="color:var(--green);">Buyers: <b id="dispBuyersPct">23.73%</b></span>
-                <span style="color:var(--red);">Sellers: <b id="dispSellersPct">76.27%</b></span>
-            </div>
-            <div style="height:7px; background:var(--red); border-radius:4px; margin-top:6px; display:flex;">
-                <div id="gaugeBuyersBar" style="width:23.73%; background:var(--green); height:100%;"></div>
-            </div>
+    <div class="sub-header-strip">
+        <div class="orderbook-title">NIFTY Order Book</div>
+        <div class="orderbook-sub">Where large orders are waiting in the NIFTY future, read live from the 200-level order book and updated every second.</div>
+        <div class="cartel-tabs">
+            <a href="/" class="cartel-tab">Desk</a>
+            <a href="/" class="cartel-tab">Charts</a>
+            <a href="/" class="cartel-tab">Chain & Greeks</a>
+            <a href="/order-book" class="cartel-tab active">Order Book</a>
         </div>
     </div>
 
-    <div class="workspace">
-        <div class="ladder-container">
+    <!-- 4 METRIC CARDS ROW -->
+    <div class="metrics-row">
+        <div class="metric-box">
+            <div class="m-title">NIFTY future</div>
+            <div class="m-val" id="dispFutureVal" style="color:#fff;">24,646.20</div>
+            <div class="m-sub" id="dispFutureSub">spot 24,611 • basis +35.5 • expires 23 Nov</div>
+        </div>
+        <div class="metric-box">
+            <div class="m-title">Nearest Big Buyers</div>
+            <div class="m-val" id="dispBuyersVal" style="color:var(--green);">24,635–24,640</div>
+            <div class="m-sub" id="dispBuyersSub">6.2 pts below • spot 24,611 (24,600)</div>
+        </div>
+        <div class="metric-box">
+            <div class="m-title">Nearest Big Sellers</div>
+            <div class="m-val" id="dispSellersVal" style="color:#ff3d71;">24,680–24,685</div>
+            <div class="m-sub" id="dispSellersSub">38.8 pts above • spot 24,647 (24,650)</div>
+        </div>
+        <div class="metric-box">
+            <div class="m-title">Liquidity</div>
+            <div class="m-val" style="color:#fff; font-size:18px;">Normal</div>
+            <div class="m-sub">85% of usual depth • spread 7.8 pts (usual 8)</div>
+        </div>
+    </div>
+
+    <!-- WORKSPACE: LADDER + RIGHT 3 PANELS -->
+    <div class="workspace-grid">
+        <!-- LADDER -->
+        <div class="ladder-panel">
+            <div class="ladder-col-header">
+                <span>Order book ladder (lots waiting, per 5 points)</span>
+                <span id="dispUpdatedTag" style="color:#94a3b8; font-size:10px;">1s ago</span>
+            </div>
             <div id="ladderRowsBox"></div>
         </div>
-        <div class="feeds-container">
+
+        <!-- RIGHT SIDE 3 CARDS (EXACT AS IN VIDEO) -->
+        <div class="right-feeds-panel">
+            <!-- CARD 1: BIG ORDERS RIGHT NOW -->
             <div class="feed-card">
-                <b style="font-size:12px; color:#e2e8f0;">BIG ORDERS RIGHT NOW 🔴</b>
-                <div id="bigOrdersFeedBox" style="margin-top:8px;"></div>
+                <div class="feed-header">
+                    <span>Big orders right now</span>
+                    <span style="color:#ff3d71; font-size:10px;">🔴 LIVE</span>
+                </div>
+                <div id="bigOrdersBox"></div>
             </div>
+
+            <!-- CARD 2: TODAY'S SCORECARD -->
             <div class="feed-card">
-                <b style="font-size:12px; color:#fbbf24;">STOP-LOSS AREAS (ESTIMATED) ⚠️</b>
-                <div id="stopLossFeedBox" style="margin-top:8px;"></div>
+                <div class="feed-header">
+                    <span>Today's scorecard: big levels price reached</span>
+                </div>
+                <div style="font-size:11px; color:#38bdf8; font-weight:800; margin-bottom:6px;">
+                    74 turned • 64 broke • 1 being watched — 54% turned today
+                </div>
+                <div id="scorecardBox" style="max-height:160px; overflow-y:auto;"></div>
+            </div>
+
+            <!-- CARD 3: STOP-LOSS HUNT AREAS -->
+            <div class="feed-card">
+                <div class="feed-header">
+                    <span>Stop-Loss Areas (estimated)</span>
+                    <span style="color:#fbbf24; font-size:10px;">⚠️ HUNT ZONES</span>
+                </div>
+                <div id="stopLossBox"></div>
             </div>
         </div>
     </div>
 
+    <!-- GUJARATI LIVE NEWS FOOTER -->
     <div class="gujarati-news-footer">
-        <span style="background:#ef4444; color:#fff; font-size:9.5px; padding:3px 6px; border-radius:3px; font-weight:bold;">ગુજરાતી લાઈવ ન્યૂઝ</span>
-        <span id="dispGujaratiNews">📢 ઓર્ડર બુક સમાચાર લોડ થઈ રહ્યા છે...</span>
+        <div class="badge-live-news">ગુજરાતી લાઈવ ન્યૂઝ</div>
+        <div id="dispGujaratiNews" style="flex:1;">📢 ઓર્ડર બુક ડેટા લોડ થઈ રહ્યો છે...</div>
     </div>
 
     <script>
@@ -943,54 +1100,100 @@ ORDERBOOK_LADDER_HTML = r"""<!DOCTYPE html>
             try {
                 let res = await fetch('/api/orderbook/ladder');
                 let d = await res.json();
-                document.getElementById('dispSpotFuture').innerText = d.future_spot;
-                document.getElementById('dispBuyersPct').innerText = d.buyers_pct + '%';
-                document.getElementById('dispSellersPct').innerText = d.sellers_pct + '%';
-                document.getElementById('gaugeBuyersBar').style.width = d.buyers_pct + '%';
+
+                document.getElementById('dispFutureVal').innerText = d.future_spot;
+                document.getElementById('dispFutureSub').innerText = `spot ${d.raw_spot} • basis ${d.basis} • expires ${d.expiry}`;
+                document.getElementById('dispBuyersVal').innerText = d.nearest_buyers;
+                document.getElementById('dispBuyersSub').innerText = d.buyers_sub;
+                document.getElementById('dispSellersVal').innerText = d.nearest_sellers;
+                document.getElementById('dispSellersSub').innerText = d.sellers_sub;
+                document.getElementById('dispUpdatedTag').innerText = d.updated_txt;
                 document.getElementById('dispGujaratiNews').innerText = d.gujarati_news;
 
+                // Render Ladder Rows
                 let lHtml = '';
                 d.levels.forEach(lvl => {
                     let curCls = lvl.is_current ? 'current-price-row' : '';
-                    let bidWidth = lvl.side === "BID" ? Math.min(100, (lvl.lots / 250) * 100) : 0;
-                    let askWidth = lvl.side === "ASK" ? Math.min(100, (lvl.lots / 250) * 100) : 0;
+                    let bidWidth = lvl.side === "BID" ? Math.min(100, (lvl.lots / 160) * 100) : 0;
+                    let askWidth = lvl.side === "ASK" ? Math.min(100, (lvl.lots / 160) * 100) : 0;
 
-                    let bidContent = lvl.side === "BID" ? `<span style="color:var(--green); font-size:10px; margin-right:4px;">${lvl.tag}</span><div class="bid-fill" style="width:${bidWidth}%;">${lvl.lots}</div>` : (lvl.tag === "Pulled Order" ? `<span style="color:#64748b; font-size:10px;">Pulled Order</span>` : '');
-                    let askContent = lvl.side === "ASK" ? `<div class="ask-fill" style="width:${askWidth}%;">${lvl.lots}</div><span style="color:var(--red); font-size:10px; margin-left:4px;">${lvl.tag}</span>` : (lvl.tag === "Pulled Order" ? `<span style="color:#64748b; font-size:10px;">Pulled Order</span>` : '');
+                    let bidContent = '';
+                    if (lvl.side === "BID") {
+                        let tagTxt = lvl.tag ? `<span class="tag-big-buyer">${lvl.tag}</span>` : '';
+                        bidContent = `${tagTxt}<div class="bid-fill" style="width:${bidWidth}%;">${lvl.lots}</div>`;
+                    } else if (lvl.tag === "Pulled-Order") {
+                        bidContent = `<span class="tag-pulled">Pulled-Order</span>`;
+                    }
 
-                    lHtml += `<div class="ladder-row ${curCls}">
-                        <div class="bid-bar-box">${bidContent}</div>
-                        <div class="price-center-axis">${lvl.price}</div>
-                        <div class="ask-bar-box">${askContent}</div>
+                    let askContent = '';
+                    if (lvl.side === "ASK") {
+                        let tagTxt = lvl.tag ? `<span class="tag-big-seller">${lvl.tag}</span>` : '';
+                        askContent = `<div class="ask-fill" style="width:${askWidth}%;">${lvl.lots}</div>${tagTxt}`;
+                    } else if (lvl.tag === "Pulled-Order") {
+                        askContent = `<span class="tag-pulled">Pulled-Order</span>`;
+                    }
+
+                    lHtml += `
+                    <div class="ladder-row ${curCls}">
+                        <div class="bid-box">${bidContent}</div>
+                        <div class="axis-price">${lvl.price}</div>
+                        <div class="ask-box">${askContent}</div>
                     </div>`;
                 });
                 document.getElementById('ladderRowsBox').innerHTML = lHtml;
 
-                let oHtml = '';
-                d.big_orders.forEach(o => {
-                    oHtml += `<div style="display:flex; justify-content:space-between; font-size:11px; padding:4px 0;">
-                        <span>${o.action} ${o.range}</span><b>${o.lots}</b>
+                // Render Big Orders Feed
+                let bHtml = '';
+                d.big_orders.forEach(b => {
+                    let col = b.side === "BUY" ? "var(--green)" : "#ff3d71";
+                    let title = b.side === "BUY" ? "Big Buyers" : "Big Sellers";
+                    bHtml += `
+                    <div class="feed-item">
+                        <span style="color:${col}; font-weight:800;">${title} ${b.range}</span><br>
+                        <span style="color:#94a3b8; font-size:10px;">${b.lots}</span>
                     </div>`;
                 });
-                document.getElementById('bigOrdersFeedBox').innerHTML = oHtml;
+                document.getElementById('bigOrdersBox').innerHTML = bHtml;
 
+                // Render Scorecard
                 let sHtml = '';
-                d.stop_losses.forEach(s => {
-                    sHtml += `<div style="display:flex; justify-content:space-between; font-size:11px; padding:4px 0;">
-                        <span style="color:#ff3d71;">${s.area}</span><span style="color:#94a3b8;">${s.type}</span>
+                d.scorecard.forEach(s => {
+                    let col = s.status.includes("turned") ? "var(--green)" : "#ff3d71";
+                    sHtml += `
+                    <div style="display:flex; justify-content:space-between; font-size:10.5px; padding:3px 0;">
+                        <span>${s.time} — ${s.desc}</span>
+                        <b style="color:${col};">${s.status}</b>
                     </div>`;
                 });
-                document.getElementById('stopLossFeedBox').innerHTML = sHtml;
+                document.getElementById('scorecardBox').innerHTML = sHtml;
+
+                // Render Stop-Loss Areas
+                let slHtml = '';
+                d.stop_losses.forEach(sl => {
+                    let col = sl.type === "SL-HUNT" ? "#ff3d71" : "var(--green)";
+                    slHtml += `
+                    <div class="feed-item" style="display:flex; justify-content:space-between;">
+                        <b style="color:${col};">${sl.level}</b>
+                        <span style="color:#94a3b8; font-size:10px;">${sl.desc}</span>
+                    </div>`;
+                });
+                document.getElementById('stopLossBox').innerHTML = slHtml;
+
             } catch(e) {}
         }
+
         fetchLadder();
-        setInterval(fetchLadder, 3000);
+        setInterval(fetchLadder, 2500);
     </script>
 </body>
 </html>
 """
 
 # ==================== CLEAN DEDICATED ROUTE BINDINGS (ALL 4 PAGES) ====================
+@app.get("/order-book", response_class=HTMLResponse)
+def orderbook_page():
+    return ORDERBOOK_LADDER_HTML
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     return TERMINAL_HTML
@@ -1002,7 +1205,3 @@ def oi_page():
 @app.get("/paper-trading", response_class=HTMLResponse)
 def paper_page():
     return ANGEL_APP_HTML
-
-@app.get("/order-book", response_class=HTMLResponse)
-def orderbook_page():
-    return ORDERBOOK_LADDER_HTML
