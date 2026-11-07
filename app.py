@@ -279,6 +279,8 @@ def get_market_data(tf: str = "5m", expiry: str = "", selected_ce_strike: int = 
             "oi_ce": ce_oi, "oi_pe": pe_oi,
             "oi_ce_str": f"{round(ce_oi/100000, 1)}L",
             "oi_pe_str": f"{round(pe_oi/100000, 1)}L",
+            "oi_ce_chg": f"+{round((ce_oi*0.12)/100000, 1)}L",
+            "oi_pe_chg": f"+{round((pe_oi*0.14)/100000, 1)}L",
             "is_atm": (s == atm_strike),
             "is_selected_ce": (s == active_ce),
             "is_selected_pe": (s == active_pe)
@@ -457,6 +459,18 @@ def get_orderbook_ladder():
         "gujarati_news": gujarati_news
     }
 
+@app.get("/api/fno/buildups")
+def get_fno_buildups():
+    m = get_market_data()
+    return {
+        "spot": f"{m['spot']:,.2f}",
+        "market_mood": "Trending down",
+        "advancing": "388 / 1977",
+        "india_vix": m["india_vix"],
+        "gap_prediction": "Gap-down open likely (39 pts down, 45% confidence)",
+        "buildups": FNO_BUILDUPS
+    }
+
 @app.get("/api/paper/state")
 def get_paper_state():
     total_unrealized = sum(p.get("pnl", 0) for p in PAPER_STATE["positions"])
@@ -511,11 +525,11 @@ async def close_order(req: Request):
         return JSONResponse({"status": "success", "message": f"{target['symbol']} Closed! P&L: ₹{pnl}"})
     return JSONResponse({"status": "error", "message": "Position Not Found"})
 
-# ==================== PAGE 1: PRO TERMINAL (3 CHARTS WITH BIG BUYER/SELLER LINES) ====================
+# ==================== PAGE 1: PRO TERMINAL (3 CHARTS + SIDEBAR OI & OI CHANGE BARS) ====================
 TERMINAL_HTML = r"""<!DOCTYPE html>
 <html>
 <head>
-    <title>Hari Master Pro Terminal - 3 Candlestick Charts & Institutional Lines</title>
+    <title>Hari Master Pro Terminal - Charts & Side OI Change Bars</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
@@ -530,18 +544,25 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
         .nav-links a.active { background: #2563eb; color: #fff; }
 
         .workspace { flex: 1; display: flex; width: 100%; height: calc(100vh - 44px); }
-        .charts-column { flex: 6.8; display: flex; flex-direction: column; gap: 2px; background: #141b2b; }
+        .charts-column { flex: 5.8; display: flex; flex-direction: column; gap: 2px; background: #141b2b; }
         .spot-card { flex: 5.6; position: relative; background: #080b11; min-height: 250px; }
         .opt-row { flex: 4.4; display: flex; gap: 2px; background: #141b2b; min-height: 200px; }
         .opt-card { flex: 1; position: relative; background: #080b11; min-height: 100%; }
         .chart-container-box { width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
+
+        /* SIDEBAR OI & OI CHANGE BARS (NEW INTEGRATION) */
+        .side-oi-panel { flex: 4.2; background: #0e131f; border-left: 1px solid #1a2234; display: flex; flex-direction: column; overflow: hidden; }
+        .side-oi-header { padding: 8px 12px; background: #111726; border-bottom: 1px solid #1a2234; font-size: 11.5px; font-weight: 900; color: #38bdf8; display: flex; justify-content: space-between; }
+        .side-oi-scroll { flex: 1; overflow-y: auto; padding: 6px 10px; }
         
-        .chain-panel { flex: 3.2; background: #0e131f; border-left: 1px solid #1a2234; display: flex; flex-direction: column; overflow: hidden; }
-        .chain-scroll { flex: 1; overflow-y: auto; }
-        table { width: 100%; border-collapse: collapse; font-size: 12px; text-align: center; }
-        th { background: #161e2e; padding: 8px 4px; color: #94a3b8; position: sticky; top: 0; z-index: 2; border-bottom: 1px solid #1a2234; }
-        td { padding: 7px 2px; border-bottom: 1px solid #141b2b; cursor: pointer; }
-        .atm-row { background: rgba(56, 189, 248, 0.15) !important; font-weight: bold; border-left: 3px solid #38bdf8; }
+        .oi-bar-row { display: flex; align-items: center; height: 32px; font-size: 11.5px; font-weight: 800; margin-bottom: 3px; }
+        .ce-bar-box { flex: 1; display: flex; justify-content: flex-end; align-items: center; padding-right: 6px; }
+        .ce-bar-fill { background: rgba(255, 61, 113, 0.85); height: 18px; border-radius: 3px 0 0 3px; display: flex; align-items: center; justify-content: flex-end; padding-right: 4px; color: #fff; font-size: 10px; }
+        .stk-badge { width: 75px; text-align: center; color: #fff; font-family: monospace; font-size: 12px; font-weight: 900; background: #162033; padding: 4px 0; border-radius: 4px; border: 1px solid #22324e; cursor: pointer; }
+        .stk-badge.atm { background: #38bdf8; color: #000; border-color: #38bdf8; }
+        .pe-bar-box { flex: 1; display: flex; justify-content: flex-start; align-items: center; padding-left: 6px; }
+        .pe-bar-fill { background: rgba(0, 230, 118, 0.85); height: 18px; border-radius: 0 3px 3px 0; display: flex; align-items: center; justify-content: flex-start; padding-left: 4px; color: #000; font-size: 10px; font-weight: 900; }
+
         .lbl { position: absolute; top: 6px; left: 10px; font-size: 11px; font-weight: 700; z-index: 10; pointer-events: none; background: rgba(8,11,17,0.85); padding: 2px 8px; border-radius: 3px; border: 1px solid #1a2234; }
         .greeks-hud-card { position: absolute; top: 32px; left: 10px; background: rgba(14, 19, 31, 0.94); border: 1px solid #1f2f45; border-radius: 6px; padding: 6px 12px; font-size: 11px; z-index: 15; display: flex; flex-direction: column; gap: 3px; min-width: 175px; }
         .greeks-hud-card div { display: flex; justify-content: space-between; gap: 8px; }
@@ -549,7 +570,7 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
 </head>
 <body>
     <div class="header-bar">
-        <div class="brand">📈 HARI MASTER TERMINAL (CHART LINES ACTIVATED)</div>
+        <div class="brand">📈 HARI MASTER TERMINAL (CHART + SIDE OI BARS)</div>
         <div style="display:flex; align-items:center; gap:8px;">
             <div class="spot-badge" id="spotBadge">NIFTY: ₹24,646.20</div>
             <div class="pain-badge" id="maxPainBadge">🎯 MAX PAIN: 24,600</div>
@@ -558,14 +579,15 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
             <a href="/" class="active">📈 CHARTS</a>
             <a href="/order-book">🛡️ ORDER BOOK</a>
             <a href="/oi-analytics">⚡ OI RADAR & CHARTS</a>
+            <a href="/fno-activity">📊 F&O ACTIVITY</a>
             <a href="/paper-trading">📱 ANGEL PAPER</a>
         </div>
     </div>
     <div class="workspace">
+        <!-- LEFT: 3 CANDLESTICK CHARTS -->
         <div class="charts-column">
-            <!-- 1. SPOT CANDLESTICK CHART WITH DIRECT BIG BUYER/SELLER LINES -->
             <div class="spot-card">
-                <div class="lbl" style="color:#38bdf8;">NIFTY 50 SPOT (5M) • BIG BUYERS & SELLERS PRICE LINES ACTIVE</div>
+                <div class="lbl" style="color:#38bdf8;">NIFTY 50 SPOT (5M) • BIG BUYERS & SELLERS LINES ACTIVE</div>
                 <div class="greeks-hud-card">
                     <div style="color:#38bdf8; font-weight:800; border-bottom:1px solid #1e293b; padding-bottom:3px;">
                         <span>ATM GREEKS</span><span id="gAtm" style="color:#fbbf24;">ATM: 24,650</span>
@@ -576,7 +598,6 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
                 </div>
                 <div id="chart_spot" class="chart-container-box"></div>
             </div>
-            <!-- 2 & 3. SELECTED CE AND PE CANDLESTICK CHARTS -->
             <div class="opt-row">
                 <div class="opt-card">
                     <div class="lbl" id="lbl_ce" style="color:#00ff88;">CALL (CE) STRIKE CHART</div>
@@ -588,26 +609,18 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
                 </div>
             </div>
         </div>
-        <div class="chain-panel">
-            <div style="padding:8px 10px; background:#111726; font-size:12px; font-weight:bold; border-bottom:1px solid #1a2234;">
-                OPTION CHAIN (Click to Chart)
+
+        <!-- RIGHT: SIDEBAR OI & OI CHANGE BARS (SIDE BY SIDE WITH CHART) -->
+        <div class="side-oi-panel">
+            <div class="side-oi-header">
+                <span style="color:#ff3d71;">◀ CALL OI (CHG)</span>
+                <span style="color:#fff;">STRIKE</span>
+                <span style="color:#00e676;">PUT OI (CHG) ▶</span>
             </div>
-            <div class="chain-scroll">
-                <table>
-                    <thead>
-                        <tr>
-                            <th style="color:#00ff88;">CE OI</th>
-                            <th style="color:#00ff88;">CE LTP</th>
-                            <th>STRIKE</th>
-                            <th style="color:#ff2255;">PE LTP</th>
-                            <th style="color:#ff2255;">PE OI</th>
-                        </tr>
-                    </thead>
-                    <tbody id="chainBody"></tbody>
-                </table>
-            </div>
+            <div class="side-oi-scroll" id="sideOiRowsBox"></div>
         </div>
     </div>
+
     <script>
         const tvOpts = {
             autoSize: true,
@@ -629,8 +642,7 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
         let maxPainPriceLine = null;
 
         let selectedCE = 0, selectedPE = 0;
-        function clickCE(stk) { selectedCE = stk; fetchTerminal(true); }
-        function clickPE(stk) { selectedPE = stk; fetchTerminal(true); }
+        function clickStrike(stk) { selectedCE = stk; selectedPE = stk; fetchTerminal(true); }
 
         async function fetchTerminal(fit = false) {
             try {
@@ -685,18 +697,28 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
                     if (fit) peChart.timeScale().fitContent();
                 }
 
-                let html = '';
+                // RENDER SIDEBAR OI & OI CHANGE BARS NEXT TO CHART
+                let bHtml = '';
+                let maxOi = Math.max(...d.chain.map(x => Math.max(x.oi_ce, x.oi_pe)), 1);
                 d.chain.forEach(r => {
-                    let cls = r.is_atm ? 'atm-row' : '';
-                    html += `<tr class="${cls}">
-                        <td onclick="clickCE(${r.strike})" style="color:#00ff88; font-weight:700;">${r.oi_ce_str}</td>
-                        <td onclick="clickCE(${r.strike})" style="color:#38bdf8; font-weight:800;">₹${r.ltp_ce.toFixed(2)}</td>
-                        <td style="background:#161e2e; color:#fff; font-weight:bold;">${r.strike}</td>
-                        <td onclick="clickPE(${r.strike})" style="color:#ff2255; font-weight:800;">₹${r.ltp_pe.toFixed(2)}</td>
-                        <td onclick="clickPE(${r.strike})" style="color:#ff2255; font-weight:700;">${r.oi_pe_str}</td>
-                    </tr>`;
+                    let cW = Math.min(100, Math.max(15, (r.oi_ce / maxOi) * 100));
+                    let pW = Math.min(100, Math.max(15, (r.oi_pe / maxOi) * 100));
+                    let atmCls = r.is_atm ? 'atm' : '';
+                    bHtml += `
+                    <div class="oi-bar-row">
+                        <div class="ce-bar-box">
+                            <span style="color:#94a3b8; font-size:10px; margin-right:4px;">${r.oi_ce_chg}</span>
+                            <div class="ce-bar-fill" style="width:${cW}%;">${r.oi_ce_str}</div>
+                        </div>
+                        <div class="stk-badge ${atmCls}" onclick="clickStrike(${r.strike})">${r.strike}</div>
+                        <div class="pe-bar-box">
+                            <div class="pe-bar-fill" style="width:${pW}%;">${r.oi_pe_str}</div>
+                            <span style="color:#94a3b8; font-size:10px; margin-left:4px;">${r.oi_pe_chg}</span>
+                        </div>
+                    </div>`;
                 });
-                document.getElementById('chainBody').innerHTML = html;
+                document.getElementById('sideOiRowsBox').innerHTML = bHtml;
+
             } catch(e) {}
         }
         window.addEventListener('resize', () => { sChart.resize(document.getElementById('chart_spot').clientWidth, document.getElementById('chart_spot').clientHeight); });
@@ -707,7 +729,7 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
 </html>
 """
 
-# ==================== PAGE 2: QUANTUM OI RADAR & NEW STRIKE-WISE OI BAR CHART ====================
+# ==================== PAGE 2: QUANTUM OI RADAR & STRIKE-WISE OI BAR CHART ====================
 OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="gu">
 <head>
@@ -730,7 +752,6 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         .daily-tracker-bar { background: linear-gradient(90deg, #0d1e33, #09201a); border-bottom: 1px solid #1e3a5f; padding: 6px 14px; display: flex; align-items: center; justify-content: space-between; font-size: 12.5px; font-weight: 800; }
         .btn-view-trades { background: #1e3a8a; border: 1px solid #38bdf8; color: #fff; padding: 3px 10px; border-radius: 4px; font-size: 11px; font-weight: 800; cursor: pointer; margin-left: 8px; }
 
-        /* VIEW SWITCHER TABS */
         .oi-view-toggle-strip { background: #090d16; padding: 6px 14px; border-bottom: 1px solid var(--border); display: flex; gap: 8px; align-items: center; }
         .tab-btn { background: #131d2e; border: 1px solid var(--border); color: #94a3b8; padding: 5px 14px; border-radius: 5px; font-size: 12px; font-weight: 800; cursor: pointer; }
         .tab-btn.active { background: #2563eb; color: #fff; border-color: #3b82f6; }
@@ -738,7 +759,6 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         .view-section { display: none; width: 100%; flex: 1; min-height: calc(100vh - 170px); }
         .view-section.active-section { display: flex; }
 
-        /* VIEW 1: MATRIX WIRES */
         .matrix-canvas-box { flex: 1; position: relative; background: #040609; }
         #streamCanvas { width: 100%; height: 100%; }
         .strike-nodes-col { width: 480px; max-width: 50%; background: #080d16; border-left: 1.5px solid var(--border); display: flex; flex-direction: column; justify-content: space-around; padding: 8px; }
@@ -749,7 +769,6 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         .key-support-badge { background: rgba(0, 255, 136, 0.2); border: 1px solid #00ff88; color: #00ff88; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 900; margin-left: 6px; }
         .key-res-badge { background: rgba(255, 34, 85, 0.2); border: 1px solid #ff2255; color: #ff2255; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 900; margin-left: 6px; }
 
-        /* VIEW 2: STRIKE-WISE OI BAR CHART (NEW FEATURE) */
         .oi-barchart-container { flex: 1; padding: 16px; background: #070a12; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
         .barchart-row { display: flex; align-items: center; height: 32px; font-size: 13px; font-weight: 800; }
         .call-bar-side { flex: 1; display: flex; justify-content: flex-end; align-items: center; padding-right: 12px; }
@@ -765,10 +784,11 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 </head>
 <body>
     <div class="cyber-header">
-        <div class="header-title">⚡ HARI MASTER QUANTUM OI RADAR</div>
+        <div class="header-title">⚡ HARI MASTER QUANTUM OI RADAR & CHARTS</div>
         <div class="nav-links">
             <a href="/">📈 CHARTS</a>
             <a href="/order-book">🛡️ ORDER BOOK</a>
+            <a href="/fno-activity">📊 F&O ACTIVITY</a>
             <a href="/paper-trading">📱 ANGEL PAPER</a>
         </div>
     </div>
@@ -780,13 +800,12 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         <span style="color:var(--green-glow); font-size:13px;">NET RETURN: <b>+62 PTS</b> ✅</span>
     </div>
 
-    <!-- TOGGLE TABS: SWITCH BETWEEN WIRES MATRIX AND STRIKE-WISE OI BAR CHART -->
     <div class="oi-view-toggle-strip">
         <button class="tab-btn active" onclick="switchOiView('Matrix', this)">⚡ QUANTUM WIRES MATRIX</button>
         <button class="tab-btn" onclick="switchOiView('BarChart', this)">📊 STRIKE-WISE OI BAR CHART (CALL vs PUT)</button>
     </div>
 
-    <!-- 1. WIRES MATRIX VIEW -->
+    <!-- 1. WIRES MATRIX VIEW WITH REAL-TIME OI BADGES ON WIRES -->
     <div id="viewMatrix" class="view-section active-section">
         <div class="matrix-canvas-box" id="canvasContainer"><canvas id="streamCanvas"></canvas></div>
         <div class="strike-nodes-col">
@@ -798,7 +817,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         </div>
     </div>
 
-    <!-- 2. STRIKE-WISE OI BAR CHART VIEW (NEW FEATURE) -->
+    <!-- 2. STRIKE-WISE OI BAR CHART VIEW -->
     <div id="viewBarChart" class="view-section" style="flex-direction:column;">
         <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 16px; background:#0c121e; border-bottom:1px solid var(--border);">
             <div style="color:#ff3d71; font-weight:900; font-size:13px;">◀ CALL OI (RESISTANCE)</div>
@@ -928,7 +947,6 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
                 document.getElementById('callStrikes').innerHTML = cHtml;
                 document.getElementById('putStrikes').innerHTML = pHtml;
 
-                // RENDER NEW STRIKE-WISE CALL vs PUT OI BAR CHART ROWS
                 let bHtml = '';
                 let maxOi = Math.max(...d.calls.map(x => x.oi), ...d.puts.map(x => x.oi), 1);
                 for (let i = 0; i < Math.min(d.calls.length, d.puts.length); i++) {
@@ -1011,6 +1029,7 @@ ORDERBOOK_LADDER_HTML = r"""<!DOCTYPE html>
         <div class="nav-links">
             <a href="/">📈 CHARTS</a>
             <a href="/oi-analytics">⚡ OI RADAR & CHARTS</a>
+            <a href="/fno-activity">📊 F&O ACTIVITY</a>
             <a href="/paper-trading">📱 ANGEL PAPER</a>
         </div>
     </div>
@@ -1105,7 +1124,131 @@ ORDERBOOK_LADDER_HTML = r"""<!DOCTYPE html>
 </html>
 """
 
-# ==================== PAGE 4: ANGEL ONE MOBILE PAPER APP ====================
+# ==================== PAGE 4: F&O ACTIVITY SCREENER ====================
+FNO_ACTIVITY_HTML = r"""<!DOCTYPE html>
+<html lang="gu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>F&O Activity - The Trade Cartel</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Noto+Sans+Gujarati:wght@600;800;900&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        :root {
+            --bg-deep: #090d16; --panel-bg: #111726; --card-bg: #162033;
+            --green: #00e676; --red: #ff3d71; --blue: #38bdf8; --orange: #fb923c;
+            --border: #1e293b; --text-dim: #94a3b8;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', 'Noto Sans Gujarati', sans-serif; }
+        body { background: var(--bg-deep); color: #fff; min-height: 100vh; display: flex; flex-direction: column; overflow-x: hidden; }
+
+        .navbar { height: 48px; background: #070a12; border-bottom: 1.5px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; flex-shrink: 0; }
+        .nav-brand { font-size: 14px; font-weight: 900; color: #fff; display: flex; align-items: center; gap: 8px; }
+        .nav-links a { background: #131d2e; border: 1px solid var(--border); color: #38bdf8; padding: 4px 10px; border-radius: 4px; font-size: 11px; text-decoration: none; font-weight: 800; margin-left: 6px; }
+
+        .dashboard-strip { padding: 12px 16px; background: #0c121e; border-bottom: 1px solid var(--border); }
+        .dash-cards-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 8px; }
+        .d-box { background: var(--panel-bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; }
+        .d-title { font-size: 11px; color: var(--text-dim); font-weight: 700; }
+        .d-val { font-size: 18px; font-weight: 900; margin-top: 2px; }
+
+        .fno-workspace { padding: 14px 16px; flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+        .buildup-card { background: var(--panel-bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+        .b-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 8px; }
+        .stock-item-row { display: flex; align-items: center; justify-content: space-between; padding: 8px; border-bottom: 1px solid rgba(255,255,255,0.05); cursor: pointer; border-radius: 4px; }
+        .stock-item-row:hover { background: rgba(56, 189, 248, 0.1); }
+
+        .stock-modal-backdrop { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.85); display: none; justify-content: center; align-items: center; z-index: 1000; }
+        .stock-modal-card { background: #0f1624; border: 1.5px solid #38bdf8; border-radius: 12px; width: 900px; max-width: 95%; max-height: 90vh; overflow-y: auto; padding: 18px; }
+    </style>
+</head>
+<body>
+    <div class="navbar">
+        <div class="nav-brand"><span>🛡️</span> The Trade Cartel: F&O Activity</div>
+        <div class="nav-links">
+            <a href="/">📈 CHARTS</a>
+            <a href="/order-book">🛡️ ORDER BOOK</a>
+            <a href="/oi-analytics">⚡ OI RADAR</a>
+            <a href="/paper-trading">📱 ANGEL PAPER</a>
+        </div>
+    </div>
+    <div class="dashboard-strip">
+        <div class="dash-cards-grid">
+            <div class="d-box"><div class="d-title">NIFTY 50</div><div class="d-val" style="color:var(--blue);">24,646.20</div></div>
+            <div class="d-box"><div class="d-title">Market mood</div><div class="d-val" style="color:var(--red);">Trending down</div></div>
+            <div class="d-box"><div class="d-title">Advancing</div><div class="d-val" style="color:#fbbf24;">388 / 1977</div></div>
+            <div class="d-box"><div class="d-title">INDIA VIX</div><div class="d-val" style="color:#c084fc;">14.50</div></div>
+        </div>
+    </div>
+    <div class="fno-workspace">
+        <div class="buildup-card" style="border-top:3px solid var(--green);"><div class="b-header"><b style="color:var(--green);">Long build-up (Fresh Buying)</b></div><div id="boxLong"></div></div>
+        <div class="buildup-card" style="border-top:3px solid var(--red);"><div class="b-header"><b style="color:var(--red);">Short build-up (Fresh Selling)</b></div><div id="boxShort"></div></div>
+        <div class="buildup-card" style="border-top:3px solid var(--blue);"><div class="b-header"><b style="color:var(--blue);">Short covering (Shorts Closing)</b></div><div id="boxCovering"></div></div>
+        <div class="buildup-card" style="border-top:3px solid var(--orange);"><div class="b-header"><b style="color:var(--orange);">Long unwinding (Longs Closing)</b></div><div id="boxUnwinding"></div></div>
+    </div>
+
+    <div class="stock-modal-backdrop" id="stockModal">
+        <div class="stock-modal-card">
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:10px;">
+                <div><b style="font-size:18px;" id="mSym">AXISBANK</b><span style="font-size:16px; color:var(--green); margin-left:10px;" id="mPrice">₹1,217.50</span></div>
+                <button onclick="document.getElementById('stockModal').style.display='none'" style="background:#ff3d71; color:#fff; border:none; padding:6px 12px; border-radius:4px; font-weight:bold; cursor:pointer;">CLOSE</button>
+            </div>
+            <div id="stockChartContainer" style="width:100%; height:320px; margin-top:14px; background:#070a12; border-radius:6px;"></div>
+        </div>
+    </div>
+
+    <script>
+        let fChart = null, fSeries = null;
+        async function loadFno() {
+            try {
+                let res = await fetch('/api/fno/buildups');
+                let d = await res.json();
+                renderList('boxLong', d.buildups.long_buildup, 'var(--green)');
+                renderList('boxShort', d.buildups.short_buildup, 'var(--red)');
+                renderList('boxCovering', d.buildups.short_covering, 'var(--blue)');
+                renderList('boxUnwinding', d.buildups.long_unwinding, 'var(--orange)');
+            } catch(e) {}
+        }
+        function renderList(id, list, col) {
+            let html = '';
+            list.forEach(s => {
+                html += `<div class="stock-item-row" onclick='openModal(${JSON.stringify(s)})'>
+                    <div><b>${s.symbol}</b><br><small style="color:var(--text-dim);">${s.name}</small></div>
+                    <div style="text-align:right;"><b>₹ ${s.price}</b><br><small style="color:${col}; font-weight:bold;">${s.pchange} • OI ${s.oi}</small></div>
+                </div>`;
+            });
+            document.getElementById(id).innerHTML = html;
+        }
+        function openModal(s) {
+            document.getElementById('mSym').innerText = s.symbol;
+            document.getElementById('mPrice').innerText = '₹ ' + s.price + ' (' + s.pchange + ')';
+            document.getElementById('stockModal').style.display = 'flex';
+            setTimeout(() => {
+                const c = document.getElementById('stockChartContainer');
+                c.innerHTML = '';
+                fChart = LightweightCharts.createChart(c, { autoSize: true, layout: { background: { color: '#070a12' }, textColor: '#94a3b8' }, timeScale: { timeVisible: true } });
+                fSeries = fChart.addCandlestickSeries({ upColor: '#00e676', downColor: '#ff3d71' });
+                let p = parseFloat(s.price.replace(',', '')) || 1200;
+                let base = Math.floor(Date.now() / 1000) - 3600 * 4;
+                let candles = [];
+                for (let i = 0; i < 40; i++) {
+                    let o = p;
+                    let h = o + 5;
+                    let l = o - 4;
+                    let cl = o + (i % 2 === 0 ? 3 : -2);
+                    candles.push({ time: base + (i * 300), open: o, high: h, low: l, close: cl });
+                    p = cl;
+                }
+                fSeries.setData(candles);
+            }, 100);
+        }
+        loadFno();
+    </script>
+</body>
+</html>
+"""
+
+# ==================== PAGE 5: ANGEL ONE MOBILE PAPER APP ====================
 ANGEL_APP_HTML = r"""<!DOCTYPE html>
 <html lang="gu">
 <head>
@@ -1138,6 +1281,7 @@ ANGEL_APP_HTML = r"""<!DOCTYPE html>
             <a href="/">📈 CHARTS</a>
             <a href="/order-book">🛡️ LADDER</a>
             <a href="/oi-analytics">⚡ RADAR</a>
+            <a href="/fno-activity">📊 F&O</a>
         </div>
     </div>
     <div class="app-body">
@@ -1183,7 +1327,7 @@ ANGEL_APP_HTML = r"""<!DOCTYPE html>
 </html>
 """
 
-# ==================== ROUTE BINDINGS ====================
+# ==================== ROUTE BINDINGS (ALL 5 PAGES ACTIVE) ====================
 @app.get("/", response_class=HTMLResponse)
 def pro_terminal():
     return TERMINAL_HTML
@@ -1195,6 +1339,10 @@ def orderbook_page():
 @app.get("/oi-analytics", response_class=HTMLResponse)
 def oi_page():
     return OI_DASHBOARD_HTML
+
+@app.get("/fno-activity", response_class=HTMLResponse)
+def fno_page():
+    return FNO_ACTIVITY_HTML
 
 @app.get("/paper-trading", response_class=HTMLResponse)
 def paper_page():
