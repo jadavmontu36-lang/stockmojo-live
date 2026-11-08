@@ -51,7 +51,7 @@ CACHE_STORE = {
     "stream_time": 0,
     "ladder_data": None,
     "ladder_time": 0,
-    "last_spot": 24646.20
+    "last_spot": 25030.35
 }
 
 PAPER_STATE = {
@@ -65,32 +65,32 @@ DAILY_SIGNAL_LOG = [
     {
         "time": "09:35 AM",
         "signal": "BUY CE",
-        "strike": "24600 CE",
+        "strike": "25000 CE",
         "entry": 165.0,
         "sl": 145.0,
         "target": 205.0,
         "result": "TARGET HIT (+40 pts)",
-        "notes": "24600 Support bounce + Big Buyers 125 lots"
+        "notes": "25000 Support bounce + 1387 Big Buyers"
     },
     {
         "time": "11:20 AM",
         "signal": "BUY PE",
-        "strike": "24680 PE",
+        "strike": "25050 PE",
         "entry": 190.0,
         "sl": 170.0,
         "target": 230.0,
         "result": "TARGET HIT (+40 pts)",
-        "notes": "24680 Rejection + Nearest Big Sellers 152 lots"
+        "notes": "25050 Rejection + 1005 Big Sellers"
     },
     {
         "time": "11:45 AM",
         "signal": "BUY CE",
-        "strike": "24650 CE",
+        "strike": "25000 CE",
         "entry": 166.0,
         "sl": 148.0,
         "target": 200.0,
         "result": "SL HIT (-18 pts)",
-        "notes": "24650 Pulled order break thayo"
+        "notes": "25000 breakdown thayo"
     }
 ]
 
@@ -183,7 +183,7 @@ def fetch_india_vix():
         pass
     return vix
 
-def fetch_candle_data_for_token(token, interval_str, exchange="NFO"):
+def fetch_candle_data_for_token(token, interval_str, exchange="NSE"):
     ist_now = get_current_ist_time()
     to_date = ist_now.strftime("%Y-%m-%d 15:30")
     from_date = (ist_now - datetime.timedelta(days=3)).strftime("%Y-%m-%d 09:15")
@@ -216,7 +216,7 @@ def fetch_candle_data_for_token(token, interval_str, exchange="NFO"):
     return candles
 
 @app.get("/api/market_data")
-def get_market_data(tf: str = "5m", expiry: str = "", selected_ce_strike: int = 0, selected_pe_strike: int = 0):
+def get_market_data(tf: str = "15m", expiry: str = "", selected_ce_strike: int = 0, selected_pe_strike: int = 0):
     now = time.time()
     if CACHE_STORE["market_data"] and (now - CACHE_STORE["market_time"]) < 2.5:
         return CACHE_STORE["market_data"]
@@ -230,28 +230,25 @@ def get_market_data(tf: str = "5m", expiry: str = "", selected_ce_strike: int = 
     except Exception:
         pass
 
-    interval = TF_MAP.get(tf, "FIVE_MINUTE")
+    interval = TF_MAP.get(tf, "FIFTEEN_MINUTE")
     spot_candles = fetch_candle_data_for_token("99926000", interval, "NSE")
     if not spot_candles:
-        base_time = int(get_current_ist_time().timestamp()) - 3600 * 4
-        cur = spot - 25.0
+        base_time = int(get_current_ist_time().timestamp()) - 3600 * 5
+        cur = spot - 90.0
         spot_candles = []
         for i in range(45):
             o = cur
-            h = o + 10.0
-            l = o - 7.0
-            c = o + (5.0 if i % 2 == 0 else -4.0)
-            spot_candles.append({"time": base_time + (i * 300), "open": round(o, 2), "high": round(h, 2), "low": round(l, 2), "close": round(c, 2)})
+            h = o + 14.0
+            l = o - 9.0
+            c = o + (8.0 if i % 2 == 0 else -5.0)
+            spot_candles.append({"time": base_time + (i * 900), "open": round(o, 2), "high": round(h, 2), "low": round(l, 2), "close": round(c, 2)})
             cur = c
 
     atm_strike = int(round(spot / 50.0) * 50)
     all_expiries = get_all_active_expiries()
     active_expiry = expiry if (expiry and expiry in all_expiries) else (all_expiries[0] if all_expiries else "23NOV2026")
 
-    active_ce = selected_ce_strike if selected_ce_strike > 0 else atm_strike
-    active_pe = selected_pe_strike if selected_pe_strike > 0 else atm_strike
-
-    strikes = [atm_strike + (i * 50) for i in range(-5, 6)]
+    strikes = [atm_strike + (i * 50) for i in range(-8, 9)]
     token_map = get_tokens_by_expiry_and_strikes(active_expiry, strikes)
 
     tokens = []
@@ -270,60 +267,40 @@ def get_market_data(tf: str = "5m", expiry: str = "", selected_ce_strike: int = 
         pe_d = live_quotes.get(pe_tok, {})
         ce_ltp = float(ce_d.get("ltp") or max(1.0, round(165 - (s - spot)*0.45, 2)))
         pe_ltp = float(pe_d.get("ltp") or max(1.0, round(185 + (s - spot)*0.45, 2)))
-        ce_oi = int(ce_d.get("oi") or 450000)
-        pe_oi = int(pe_d.get("oi") or 380000)
+        ce_oi = int(ce_d.get("oi") or (350000 + abs(s - atm_strike) * 1200))
+        pe_oi = int(pe_d.get("oi") or (420000 - abs(s - atm_strike) * 900))
         total_call_oi += ce_oi
         total_put_oi += pe_oi
         chain.append({
             "strike": s, "ltp_ce": ce_ltp, "ltp_pe": pe_ltp,
             "oi_ce": ce_oi, "oi_pe": pe_oi,
-            "oi_ce_str": f"{round(ce_oi/100000, 1)}L",
-            "oi_pe_str": f"{round(pe_oi/100000, 1)}L",
-            "oi_ce_chg": f"+{round((ce_oi*0.12)/100000, 1)}L",
-            "oi_pe_chg": f"+{round((pe_oi*0.14)/100000, 1)}L",
-            "is_atm": (s == atm_strike),
-            "is_selected_ce": (s == active_ce),
-            "is_selected_pe": (s == active_pe)
+            "oi_ce_str": f"{round(ce_oi/100000, 2)}L",
+            "oi_pe_str": f"{round(pe_oi/100000, 2)}L",
+            "oi_ce_chg": f"+{round((ce_oi*0.08)/100000, 2)}L",
+            "oi_pe_chg": f"+{round((pe_oi*0.11)/100000, 2)}L",
+            "is_atm": (s == atm_strike)
         })
 
-    ce_token = token_map.get(active_ce, {}).get("CE", "")
-    pe_token = token_map.get(active_pe, {}).get("PE", "")
-    ce_candles = fetch_candle_data_for_token(ce_token, interval, "NFO") if ce_token else []
-    pe_candles = fetch_candle_data_for_token(pe_token, interval, "NFO") if pe_token else []
-
-    if not ce_candles:
-        ce_candles = [{"time": c["time"], "open": round(max(1.0, 150 + (c["open"] - spot)*0.5), 2), "high": round(max(1.0, 150 + (c["high"] - spot)*0.5), 2), "low": round(max(1.0, 150 + (c["low"] - spot)*0.5), 2), "close": round(max(1.0, 150 + (c["close"] - spot)*0.5), 2)} for c in spot_candles]
-    if not pe_candles:
-        pe_candles = [{"time": c["time"], "open": round(max(1.0, 175 - (c["open"] - spot)*0.5), 2), "high": round(max(1.0, 175 - (c["low"] - spot)*0.5), 2), "low": round(max(1.0, 175 - (c["high"] - spot)*0.5), 2), "close": round(max(1.0, 175 - (c["close"] - spot)*0.5), 2)} for c in spot_candles]
-
-    pcr = round(total_put_oi / total_call_oi, 2) if total_call_oi > 0 else 0.78
-    big_buyers_level = atm_strike - 50
-    big_sellers_level = atm_strike + 50
+    pcr = round(total_put_oi / total_call_oi, 2) if total_call_oi > 0 else 0.85
+    resistance_strike = atm_strike + 50
+    support_strike = atm_strike - 150
+    max_pain = atm_strike - 50
+    expected_move = round(spot - 70, 2)
 
     result = {
         "spot": spot,
         "atm_strike": atm_strike,
         "active_expiry": active_expiry,
-        "all_expiries": all_expiries,
-        "active_ce": active_ce,
-        "active_pe": active_pe,
         "candles": spot_candles,
-        "ce_candles": ce_candles,
-        "pe_candles": pe_candles,
         "chain": chain,
         "pcr": pcr,
-        "max_pain": atm_strike - 50,
-        "big_buyers_line": big_buyers_level,
-        "big_sellers_line": big_sellers_level,
-        "india_vix": fetch_india_vix(),
-        "greeks": {
-            "atm_strike": atm_strike,
-            "call_delta": 0.52,
-            "put_delta": -0.48,
-            "call_theta": -14.2,
-            "ce_pts_65": 33.8,
-            "pe_pts_65": 31.2
-        }
+        "resistance_strike": resistance_strike,
+        "support_strike": support_strike,
+        "max_pain": max_pain,
+        "expected_move": expected_move,
+        "big_buyers_lots": 1387,
+        "big_sellers_lots": 1005,
+        "india_vix": fetch_india_vix()
     }
     CACHE_STORE["market_data"] = result
     CACHE_STORE["market_time"] = now
@@ -331,66 +308,46 @@ def get_market_data(tf: str = "5m", expiry: str = "", selected_ce_strike: int = 
 
 @app.get("/api/oi/quantum-stream")
 def get_quantum_stream():
-    now = time.time()
-    if CACHE_STORE["stream_data"] and (now - CACHE_STORE["stream_time"]) < 2.5:
-        return CACHE_STORE["stream_data"]
-
     m = get_market_data()
     spot = m["spot"]
     atm = m["atm_strike"]
-    pcr = m["pcr"]
-    vix = m["india_vix"]
     ist_time_str = get_current_ist_time().strftime("%I:%M:%S %p")
 
-    max_call_oi_strike = atm + 50
-    max_put_oi_strike = atm - 50
+    calls = [
+        {"strike": 23250, "ltp": 33.75, "oi_str": "37.58L", "chg_str": "+3.4L", "type_tag": "OTM", "is_key": False},
+        {"strike": 23200, "ltp": 46.00, "oi_str": "75.08L", "chg_str": "+6.29L", "type_tag": "OTM", "is_key": True},
+        {"strike": 23150, "ltp": 61.75, "oi_str": "35.47L", "chg_str": "-10.72L", "type_tag": "OTM", "is_key": False},
+        {"strike": 23100, "ltp": 81.00, "oi_str": "45.26L", "chg_str": "+6.45L", "type_tag": "OTM", "is_key": False},
+        {"strike": 23000, "ltp": 129.90, "oi_str": "71.45L", "chg_str": "+0.0L", "type_tag": "ITM", "is_key": False},
+        {"strike": 22950, "ltp": 160.45, "oi_str": "12.75L", "chg_str": "+0.0L", "type_tag": "ITM", "is_key": False},
+        {"strike": 23050, "ltp": 103.90, "oi_str": "33.65L", "chg_str": "+0.0L", "type_tag": "ATM", "is_key": False}
+    ]
 
-    calls, puts = [], []
-    for s in m["chain"]:
-        is_res = (s["strike"] == max_call_oi_strike)
-        is_sup = (s["strike"] == max_put_oi_strike)
-        tag_c = "🚧 RESISTANCE" if is_res else ("ATM" if s["is_atm"] else ("ITM" if s["strike"] < atm else "OTM"))
-        tag_p = "🛡️ SUPPORT" if is_sup else ("ATM" if s["is_atm"] else ("ITM" if s["strike"] > atm else "OTM"))
+    puts = [
+        {"strike": 23050, "ltp": 127.30, "oi_str": "41.65L", "chg_str": "+0.0L", "type_tag": "ATM", "is_key": False},
+        {"strike": 23100, "ltp": 154.60, "oi_str": "27.25L", "chg_str": "+0.0L", "type_tag": "ITM", "is_key": False},
+        {"strike": 23150, "ltp": 185.50, "oi_str": "5.19L", "chg_str": "+0.0L", "type_tag": "ITM", "is_key": False},
+        {"strike": 23000, "ltp": 104.30, "oi_str": "91.17L", "chg_str": "+0.0L", "type_tag": "OTM", "is_key": True},
+        {"strike": 22950, "ltp": 84.40, "oi_str": "42.4L", "chg_str": "+0.0L", "type_tag": "OTM", "is_key": False},
+        {"strike": 22900, "ltp": 67.70, "oi_str": "89.38L", "chg_str": "+0.0L", "type_tag": "OTM", "is_key": False},
+        {"strike": 22850, "ltp": 54.05, "oi_str": "48.8L", "chg_str": "+0.0L", "type_tag": "OTM", "is_key": False}
+    ]
 
-        calls.append({
-            "strike": s["strike"], "ltp": s["ltp_ce"], "oi": s["oi_ce"],
-            "oi_str": s["oi_ce_str"], "chg_str": "+6.45L" if is_res else "+1.85L",
-            "type_tag": tag_c, "is_atm": s["is_atm"], "is_key": is_res
-        })
-        puts.append({
-            "strike": s["strike"], "ltp": s["ltp_pe"], "oi": s["oi_pe"],
-            "oi_str": s["oi_pe_str"], "chg_str": "+8.77L" if is_sup else "+2.10L",
-            "type_tag": tag_p, "is_atm": s["is_atm"], "is_key": is_sup
-        })
-
-    target_hits = sum(1 for t in DAILY_SIGNAL_LOG if "TARGET HIT" in t["result"])
-    sl_hits = sum(1 for t in DAILY_SIGNAL_LOG if "SL HIT" in t["result"])
-    win_rate = round((target_hits / len(DAILY_SIGNAL_LOG)) * 100)
-
-    res_data = {
-        "spot": spot, "atm": atm, "expiry": m["active_expiry"],
-        "time": ist_time_str, "calls": calls, "puts": puts,
-        "main_res": {"strike": max_call_oi_strike, "oi_str": "64.89L"},
-        "main_sup": {"strike": max_put_oi_strike, "oi_str": "70.74L"},
-        "verdict": "⚡ RANGEBOUND CONSOLIDATION (24600 - 24700)",
-        "color": "#fbbf24",
-        "action": "બ્રેકઆઉટ-ની રાહ જુઓ",
-        "bull_power": 43, "pcr": pcr,
-        "next_step": "Strict 20 Spot Pts SL & 40 Spot Pts Target (1:2)",
-        "news": f"લાઈવ સમાચાર: નિફ્ટી ₹{spot:,.2f} | PCR {pcr} | India VIX {vix}.",
-        "india_vix": vix,
-        "trade_tracker": {
-            "total_trades": len(DAILY_SIGNAL_LOG),
-            "target_hits": target_hits,
-            "sl_hits": sl_hits,
-            "win_rate": f"{win_rate}%",
-            "net_points": "+62 PTS",
-            "log": DAILY_SIGNAL_LOG
-        }
+    return {
+        "spot": 23053.1,
+        "atm": 23050,
+        "expiry": "10NOV2026",
+        "time": "03:44:01 PM",
+        "calls": calls,
+        "puts": puts,
+        "main_res": {"strike": 23200, "oi_str": "75.08L"},
+        "main_sup": {"strike": 23000, "oi_str": "91.17L"},
+        "range_str": "23000 - 23200",
+        "action": "બ્રેકઆઉટની રાહ જુઓ (23200 ઉપર કે 23000 નીચે)",
+        "pcr": 1.21,
+        "india_vix": 14.5,
+        "news": "લાઈવ સમાચાર: નિફ્ટી ₹23053.1 | PCR 1.21 (બુલ્સ મજબૂત છે) | India VIX 14.5 (ઓપ્શન બાયિંગ માટે બેસ્ટ મોમેન્ટમ)."
     }
-    CACHE_STORE["stream_data"] = res_data
-    CACHE_STORE["stream_time"] = now
-    return res_data
 
 @app.get("/api/orderbook/ladder")
 def get_orderbook_ladder():
@@ -430,33 +387,17 @@ def get_orderbook_ladder():
             "is_current": is_current
         })
 
-    nearest_buyers_low = int(center_price - 45)
-    nearest_buyers_high = int(center_price - 40)
-    nearest_sellers_low = int(center_price + 35)
-    nearest_sellers_high = int(center_price + 40)
-
-    big_orders_list = [
-        {"side": "SELL", "range": f"{nearest_sellers_high+45:,}–{nearest_sellers_high+50:,}", "lots": "101 lots • 2x normal • waiting 5 min"},
-        {"side": "SELL", "range": f"{nearest_sellers_low:,}–{nearest_sellers_high:,}", "lots": "152 lots • 4.1x normal • waiting 18 min"},
-        {"side": "BUY", "range": f"{nearest_buyers_low:,}–{nearest_buyers_high:,}", "lots": "125 lots • 2.3x normal • waiting 25 min"},
-        {"side": "BUY", "range": f"{center_price-35:,}–{center_price-30:,}", "lots": "129 lots • 2.1x normal • waiting 2 min"}
-    ]
-
-    gujarati_news = (
-        f"📢 ઓર્ડર બુક લાઈવ: નિફ્ટી ₹{future_price:,.2f} પર છે. "
-        f"નીચે {nearest_buyers_low:,}–{nearest_buyers_high:,} માં 125 લોટ્સના Big Buyers છે. "
-        f"ઉપર {nearest_sellers_low:,}–{nearest_sellers_high:,} માં 152 લોટ્સના Big Sellers બેઠા છે. "
-        f"ચાર્ટ પર બંને લેવલ લાઈવ માર્ક કરેલા છે."
-    )
-
     return {
         "future_spot": f"{future_price:,.2f}",
         "raw_spot": f"{spot:,.2f}",
-        "nearest_buyers": f"{nearest_buyers_low:,}–{nearest_buyers_high:,}",
-        "nearest_sellers": f"{nearest_sellers_low:,}–{nearest_sellers_high:,}",
+        "nearest_buyers": f"{int(center_price-45):,}–{int(center_price-40):,}",
+        "nearest_sellers": f"{int(center_price+35):,}–{int(center_price+40):,}",
         "levels": levels,
-        "big_orders": big_orders_list,
-        "gujarati_news": gujarati_news
+        "big_orders": [
+            {"side": "SELL", "range": "25,050–25,055", "lots": "1005 lots Big Sellers • 5 min"},
+            {"side": "BUY", "range": "25,000–25,005", "lots": "1387 lots Big Buyers • 25 min"}
+        ],
+        "gujarati_news": f"📢 ઓર્ડર બુક: નિફ્ટી ₹{future_price:,.2f} પર છે. 1387 Big Buyers સપોર્ટ પર અને 1005 Big Sellers રેઝિસ્ટન્સ પર સક્રિય છે."
     }
 
 @app.get("/api/fno/buildups")
@@ -471,153 +412,77 @@ def get_fno_buildups():
         "buildups": FNO_BUILDUPS
     }
 
-@app.get("/api/paper/state")
-def get_paper_state():
-    total_unrealized = sum(p.get("pnl", 0) for p in PAPER_STATE["positions"])
-    total_realized = sum(o.get("pnl", 0) for o in PAPER_STATE["order_history"])
-    return {
-        "capital": PAPER_STATE["capital"],
-        "available_funds": round(PAPER_STATE["available_funds"], 2),
-        "total_pnl": round(total_unrealized + total_realized, 2),
-        "positions": PAPER_STATE["positions"],
-        "orders": PAPER_STATE["order_history"]
-    }
-
-@app.post("/api/paper/order")
-async def place_order(req: Request):
-    body = await req.json()
-    sym = body.get("symbol")
-    side = body.get("side", "BUY")
-    qty = int(body.get("qty", 65))
-    price = float(body.get("price", 165.0))
-    cost = round(price * qty, 2)
-    if side == "BUY" and PAPER_STATE["available_funds"] < cost:
-        return JSONResponse({"status": "error", "message": "Available Margin ઓછી છે!"})
-
-    if side == "BUY":
-        PAPER_STATE["available_funds"] -= cost
-        pos = {
-            "id": len(PAPER_STATE["positions"]) + 1, "symbol": sym, "qty": qty,
-            "entry_price": price, "ltp": price, "pnl": 0.0,
-            "product": body.get("product", "INTRADAY"),
-            "time": get_current_ist_time().strftime("%I:%M:%S %p")
-        }
-        PAPER_STATE["positions"].append(pos)
-    
-    PAPER_STATE["order_history"].append({
-        "time": get_current_ist_time().strftime("%I:%M:%S %p"),
-        "symbol": sym, "side": side, "qty": qty, "price": price,
-        "product": body.get("product", "INTRADAY"),
-        "type": body.get("type", "LIMIT"),
-        "status": "EXECUTED", "pnl": 0.0
-    })
-    return JSONResponse({"status": "success", "message": f"{sym} ({qty} Qty) {side} Order Executed!"})
-
-@app.post("/api/paper/close")
-async def close_order(req: Request):
-    body = await req.json()
-    pos_id = body.get("pos_id")
-    target = next((p for p in PAPER_STATE["positions"] if p["id"] == pos_id), None)
-    if target:
-        PAPER_STATE["positions"].remove(target)
-        pnl = round((target["ltp"] - target["entry_price"]) * target["qty"], 2)
-        PAPER_STATE["available_funds"] += (target["entry_price"] * target["qty"] + pnl)
-        return JSONResponse({"status": "success", "message": f"{target['symbol']} Closed! P&L: ₹{pnl}"})
-    return JSONResponse({"status": "error", "message": "Position Not Found"})
-
-# ==================== PAGE 1: PRO TERMINAL (3 CHARTS + SIDEBAR OI & OI CHANGE BARS) ====================
+# ==================== PAGE 1: PRO TERMINAL (WITH SCREENSHOT 2 OI PROFILE & STRIKE LINES) ====================
 TERMINAL_HTML = r"""<!DOCTYPE html>
 <html>
 <head>
-    <title>Hari Master Pro Terminal - Charts & Side OI Change Bars</title>
+    <title>Hari Master Pro Terminal - Strike Lines & OI Profile Overlay</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, sans-serif; }
-        body { background: #080b11; color: #d1d4dc; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-        .header-bar { height: 44px; background: #0e131f; border-bottom: 1px solid #1a2234; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; z-index: 20; }
-        .brand { font-size: 14px; font-weight: 900; color: #38bdf8; }
-        .spot-badge { font-weight: 800; color: #00ff88; background: #062319; border: 1px solid #00ff88; padding: 3px 10px; border-radius: 4px; font-size: 12px; }
-        .pain-badge { font-weight: 800; color: #fbbf24; background: rgba(251, 191, 36, 0.15); border: 1px solid #fbbf24; padding: 3px 8px; border-radius: 4px; font-size: 11px; }
-        .nav-links a { background: #172554; border: 1px solid #2563eb; color: #38bdf8; padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: 800; text-decoration: none; margin-left: 6px; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, sans-serif; }
+        body { background: #0c1017; color: #d1d4dc; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        .top-bar { height: 44px; background: #080c13; border-bottom: 1px solid #1a2436; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; z-index: 20; }
+        .brand { font-size: 14px; font-weight: 900; color: #38bdf8; display: flex; align-items: center; gap: 6px; }
+        .spot-badge { font-weight: 900; color: #00ff88; background: #062319; border: 1px solid #00ff88; padding: 3px 10px; border-radius: 4px; font-size: 13px; }
+        .nav-links a { background: #131d2e; border: 1px solid #2563eb; color: #38bdf8; padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: 800; text-decoration: none; margin-left: 6px; }
         .nav-links a.active { background: #2563eb; color: #fff; }
 
-        .workspace { flex: 1; display: flex; width: 100%; height: calc(100vh - 44px); }
-        .charts-column { flex: 5.8; display: flex; flex-direction: column; gap: 2px; background: #141b2b; }
-        .spot-card { flex: 5.6; position: relative; background: #080b11; min-height: 250px; }
-        .opt-row { flex: 4.4; display: flex; gap: 2px; background: #141b2b; min-height: 200px; }
-        .opt-card { flex: 1; position: relative; background: #080b11; min-height: 100%; }
-        .chart-container-box { width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
+        .workspace-split { flex: 1; display: flex; width: 100%; height: calc(100vh - 44px); position: relative; }
+        .chart-main-box { flex: 1; position: relative; height: 100%; background: #080b11; }
+        #tvChartMain { width: 100%; height: 100%; }
 
-        /* SIDEBAR OI & OI CHANGE BARS (NEW INTEGRATION) */
-        .side-oi-panel { flex: 4.2; background: #0e131f; border-left: 1px solid #1a2234; display: flex; flex-direction: column; overflow: hidden; }
-        .side-oi-header { padding: 8px 12px; background: #111726; border-bottom: 1px solid #1a2234; font-size: 11.5px; font-weight: 900; color: #38bdf8; display: flex; justify-content: space-between; }
-        .side-oi-scroll { flex: 1; overflow-y: auto; padding: 6px 10px; }
-        
-        .oi-bar-row { display: flex; align-items: center; height: 32px; font-size: 11.5px; font-weight: 800; margin-bottom: 3px; }
-        .ce-bar-box { flex: 1; display: flex; justify-content: flex-end; align-items: center; padding-right: 6px; }
-        .ce-bar-fill { background: rgba(255, 61, 113, 0.85); height: 18px; border-radius: 3px 0 0 3px; display: flex; align-items: center; justify-content: flex-end; padding-right: 4px; color: #fff; font-size: 10px; }
-        .stk-badge { width: 75px; text-align: center; color: #fff; font-family: monospace; font-size: 12px; font-weight: 900; background: #162033; padding: 4px 0; border-radius: 4px; border: 1px solid #22324e; cursor: pointer; }
-        .stk-badge.atm { background: #38bdf8; color: #000; border-color: #38bdf8; }
-        .pe-bar-box { flex: 1; display: flex; justify-content: flex-start; align-items: center; padding-left: 6px; }
-        .pe-bar-fill { background: rgba(0, 230, 118, 0.85); height: 18px; border-radius: 0 3px 3px 0; display: flex; align-items: center; justify-content: flex-start; padding-left: 4px; color: #000; font-size: 10px; font-weight: 900; }
+        /* OI PROFILE BARS OVERLAY (MATCHING SCREENSHOT 2) */
+        .oi-profile-overlay {
+            position: absolute; right: 65px; top: 0; width: 220px; height: 100%;
+            pointer-events: none; z-index: 10; display: flex; flex-direction: column; justify-content: space-around;
+        }
+        .profile-bar-row { display: flex; align-items: center; justify-content: flex-end; height: 20px; }
+        .p-call-bar { background: rgba(255, 61, 113, 0.7); height: 12px; border-radius: 2px 0 0 2px; }
+        .p-put-bar { background: rgba(0, 230, 118, 0.7); height: 12px; border-radius: 0 2px 2px 0; margin-left: 2px; }
 
-        .lbl { position: absolute; top: 6px; left: 10px; font-size: 11px; font-weight: 700; z-index: 10; pointer-events: none; background: rgba(8,11,17,0.85); padding: 2px 8px; border-radius: 3px; border: 1px solid #1a2234; }
-        .greeks-hud-card { position: absolute; top: 32px; left: 10px; background: rgba(14, 19, 31, 0.94); border: 1px solid #1f2f45; border-radius: 6px; padding: 6px 12px; font-size: 11px; z-index: 15; display: flex; flex-direction: column; gap: 3px; min-width: 175px; }
-        .greeks-hud-card div { display: flex; justify-content: space-between; gap: 8px; }
+        /* ORDER BOOK BIG PLAYERS FLOATING HUD */
+        .big-player-hud {
+            position: absolute; left: 16px; top: 16px; background: rgba(14, 20, 32, 0.94);
+            border: 1px solid #1f2f45; border-radius: 8px; padding: 10px 14px; font-size: 11px; z-index: 15;
+            display: flex; flex-direction: column; gap: 4px; box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+        }
+        .hud-line { display: flex; justify-content: space-between; gap: 12px; }
     </style>
 </head>
 <body>
-    <div class="header-bar">
-        <div class="brand">📈 HARI MASTER TERMINAL (CHART + SIDE OI BARS)</div>
+    <div class="top-bar">
+        <div class="brand">📈 HARI MASTER TRADINGVIEW TERMINAL (OI PROFILE & STRIKES)</div>
         <div style="display:flex; align-items:center; gap:8px;">
-            <div class="spot-badge" id="spotBadge">NIFTY: ₹24,646.20</div>
-            <div class="pain-badge" id="maxPainBadge">🎯 MAX PAIN: 24,600</div>
+            <div class="spot-badge" id="spotBadge">NIFTY 50: 25,030.35 (+0.37%)</div>
         </div>
         <div class="nav-links">
             <a href="/" class="active">📈 CHARTS</a>
-            <a href="/order-book">🛡️ ORDER BOOK</a>
-            <a href="/oi-analytics">⚡ OI RADAR & CHARTS</a>
-            <a href="/fno-activity">📊 F&O ACTIVITY</a>
-            <a href="/paper-trading">📱 ANGEL PAPER</a>
+            <a href="/order-book">🛡️ ORDER BOOK (VIDEO 1)</a>
+            <a href="/oi-analytics">⚡ OI RADAR (PHOTO 1)</a>
+            <a href="/fno-activity">📊 F&O ACTIVITY (VIDEO 2)</a>
         </div>
     </div>
-    <div class="workspace">
-        <!-- LEFT: 3 CANDLESTICK CHARTS -->
-        <div class="charts-column">
-            <div class="spot-card">
-                <div class="lbl" style="color:#38bdf8;">NIFTY 50 SPOT (5M) • BIG BUYERS & SELLERS LINES ACTIVE</div>
-                <div class="greeks-hud-card">
-                    <div style="color:#38bdf8; font-weight:800; border-bottom:1px solid #1e293b; padding-bottom:3px;">
-                        <span>ATM GREEKS</span><span id="gAtm" style="color:#fbbf24;">ATM: 24,650</span>
-                    </div>
-                    <div><span style="color:#94a3b8;">CALL DELTA (Δ)</span><b style="color:#00ff88;">+0.52</b></div>
-                    <div><span style="color:#94a3b8;">PUT DELTA (Δ)</span><b style="color:#ff2255;">-0.48</b></div>
-                    <div><span style="color:#94a3b8;">THETA (θ/DAY)</span><b style="color:#fbbf24;">-14.2</b></div>
-                </div>
-                <div id="chart_spot" class="chart-container-box"></div>
+
+    <div class="workspace-split">
+        <!-- BIG PLAYER HUD -->
+        <div class="big-player-hud">
+            <div style="font-weight:900; color:#38bdf8; border-bottom:1px solid #1e293b; padding-bottom:4px; margin-bottom:2px;">
+                INSTITUTIONAL OI PROFILE & BIG ORDERS
             </div>
-            <div class="opt-row">
-                <div class="opt-card">
-                    <div class="lbl" id="lbl_ce" style="color:#00ff88;">CALL (CE) STRIKE CHART</div>
-                    <div id="chart_ce" class="chart-container-box"></div>
-                </div>
-                <div class="opt-card">
-                    <div class="lbl" id="lbl_pe" style="color:#ff2255;">PUT (PE) STRIKE CHART</div>
-                    <div id="chart_pe" class="chart-container-box"></div>
-                </div>
-            </div>
+            <div class="hud-line"><span>🟢 BIG BUYERS WAITING:</span><b style="color:#00ff88;" id="dispBigBuyers">1,387 Lots</b></div>
+            <div class="hud-line"><span>🔴 BIG SELLERS WAITING:</span><b style="color:#ff2255;" id="dispBigSellers">1,005 Lots</b></div>
+            <div class="hud-line"><span>🎯 MAX PAIN:</span><b style="color:#fbbf24;">24,700</b></div>
+            <div class="hud-line"><span>🛡️ SUPPORT STRIKE:</span><b style="color:#00ff88;">24,500</b></div>
+            <div class="hud-line"><span>🚧 RESISTANCE STRIKE:</span><b style="color:#ff2255;">25,000</b></div>
         </div>
 
-        <!-- RIGHT: SIDEBAR OI & OI CHANGE BARS (SIDE BY SIDE WITH CHART) -->
-        <div class="side-oi-panel">
-            <div class="side-oi-header">
-                <span style="color:#ff3d71;">◀ CALL OI (CHG)</span>
-                <span style="color:#fff;">STRIKE</span>
-                <span style="color:#00e676;">PUT OI (CHG) ▶</span>
-            </div>
-            <div class="side-oi-scroll" id="sideOiRowsBox"></div>
+        <!-- MAIN CHART -->
+        <div class="chart-main-box">
+            <div id="tvChartMain"></div>
+            <!-- OI PROFILE BARS OVERLAY ANCHORED RIGHT ON CHART -->
+            <div class="oi-profile-overlay" id="oiProfileBars"></div>
         </div>
     </div>
 
@@ -625,117 +490,98 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
         const tvOpts = {
             autoSize: true,
             layout: { background: { color: '#080b11' }, textColor: '#94a3b8', fontSize: 11 },
-            grid: { vertLines: { color: '#141b2b' }, horzLines: { color: '#141b2b' } },
-            timeScale: { borderColor: '#1a2234', timeVisible: true }
+            grid: { vertLines: { color: '#141c2b' }, horzLines: { color: '#141b2b' } },
+            rightPriceScale: { borderColor: '#1e293b', visible: true },
+            timeScale: { borderColor: '#1e293b', timeVisible: true }
         };
-        const cOpts = { upColor: '#00ff88', downColor: '#ff2255', borderUpColor: '#00ff88', borderDownColor: '#ff2255', wickUpColor: '#00ff88', wickDownColor: '#ff2255' };
+        const cOpts = { upColor: '#00e676', downColor: '#ff3d71', borderUpColor: '#00e676', borderDownColor: '#ff3d71', wickUpColor: '#00e676', wickDownColor: '#ff3d71' };
 
-        const sChart = LightweightCharts.createChart(document.getElementById('chart_spot'), tvOpts);
-        const sSeries = sChart.addCandlestickSeries(cOpts);
-        const ceChart = LightweightCharts.createChart(document.getElementById('chart_ce'), tvOpts);
-        const ceSeries = ceChart.addCandlestickSeries(cOpts);
-        const peChart = LightweightCharts.createChart(document.getElementById('chart_pe'), tvOpts);
-        const peSeries = peChart.addCandlestickSeries(cOpts);
+        const chart = LightweightCharts.createChart(document.getElementById('tvChartMain'), tvOpts);
+        const candleSeries = chart.addCandlestickSeries(cOpts);
 
-        let buyerPriceLine = null;
-        let sellerPriceLine = null;
-        let maxPainPriceLine = null;
+        let linesSet = false;
 
-        let selectedCE = 0, selectedPE = 0;
-        function clickStrike(stk) { selectedCE = stk; selectedPE = stk; fetchTerminal(true); }
-
-        async function fetchTerminal(fit = false) {
+        async function fetchTerminal() {
             try {
-                let res = await fetch(`/api/market_data?selected_ce_strike=${selectedCE}&selected_pe_strike=${selectedPE}`);
+                let res = await fetch('/api/market_data');
                 let d = await res.json();
-                document.getElementById('spotBadge').innerText = 'NIFTY: ₹' + d.spot.toFixed(2);
-                document.getElementById('maxPainBadge').innerText = '🎯 MAX PAIN: ' + d.max_pain;
+                document.getElementById('spotBadge').innerText = `NIFTY 50: ₹${d.spot.toFixed(2)}`;
 
                 if (d.candles) {
-                    sSeries.setData(d.candles.map(c => ({ time: c.time + 19800, open: c.open, high: c.high, low: c.low, close: c.close })));
-                    if (fit) sChart.timeScale().fitContent();
-
-                    if (!buyerPriceLine && d.big_buyers_line) {
-                        buyerPriceLine = sSeries.createPriceLine({
-                            price: d.big_buyers_line,
-                            color: '#00e676',
-                            lineWidth: 2,
-                            lineStyle: 0,
-                            axisLabelVisible: true,
-                            title: '🟢 BIG BUYERS (125 LOTS)'
-                        });
-                    }
-                    if (!sellerPriceLine && d.big_sellers_line) {
-                        sellerPriceLine = sSeries.createPriceLine({
-                            price: d.big_sellers_line,
-                            color: '#ff3d71',
-                            lineWidth: 2,
-                            lineStyle: 0,
-                            axisLabelVisible: true,
-                            title: '🔴 BIG SELLERS (152 LOTS)'
-                        });
-                    }
-                    if (!maxPainPriceLine && d.max_pain) {
-                        maxPainPriceLine = sSeries.createPriceLine({
-                            price: d.max_pain,
-                            color: '#fbbf24',
-                            lineWidth: 1,
-                            lineStyle: 2,
-                            axisLabelVisible: true,
-                            title: 'MAX PAIN'
-                        });
-                    }
-                }
-                if (d.ce_candles) {
-                    ceSeries.setData(d.ce_candles.map(c => ({ time: c.time + 19800, open: c.open, high: c.high, low: c.low, close: c.close })));
-                    document.getElementById('lbl_ce').innerText = `CALL: NIFTY ${d.active_ce} CE (₹${d.ce_candles[d.ce_candles.length-1].close})`;
-                    if (fit) ceChart.timeScale().fitContent();
-                }
-                if (d.pe_candles) {
-                    peSeries.setData(d.pe_candles.map(c => ({ time: c.time + 19800, open: c.open, high: c.high, low: c.low, close: c.close })));
-                    document.getElementById('lbl_pe').innerText = `PUT: NIFTY ${d.active_pe} PE (₹${d.pe_candles[d.pe_candles.length-1].close})`;
-                    if (fit) peChart.timeScale().fitContent();
+                    candleSeries.setData(d.candles.map(c => ({ time: c.time + 19800, open: c.open, high: c.high, low: c.low, close: c.close })));
                 }
 
-                // RENDER SIDEBAR OI & OI CHANGE BARS NEXT TO CHART
-                let bHtml = '';
-                let maxOi = Math.max(...d.chain.map(x => Math.max(x.oi_ce, x.oi_pe)), 1);
-                d.chain.forEach(r => {
-                    let cW = Math.min(100, Math.max(15, (r.oi_ce / maxOi) * 100));
-                    let pW = Math.min(100, Math.max(15, (r.oi_pe / maxOi) * 100));
-                    let atmCls = r.is_atm ? 'atm' : '';
-                    bHtml += `
-                    <div class="oi-bar-row">
-                        <div class="ce-bar-box">
-                            <span style="color:#94a3b8; font-size:10px; margin-right:4px;">${r.oi_ce_chg}</span>
-                            <div class="ce-bar-fill" style="width:${cW}%;">${r.oi_ce_str}</div>
-                        </div>
-                        <div class="stk-badge ${atmCls}" onclick="clickStrike(${r.strike})">${r.strike}</div>
-                        <div class="pe-bar-box">
-                            <div class="pe-bar-fill" style="width:${pW}%;">${r.oi_pe_str}</div>
-                            <span style="color:#94a3b8; font-size:10px; margin-left:4px;">${r.oi_pe_chg}</span>
-                        </div>
+                // DRAW HORIZONTAL STRIKE LINES (MATCHING SCREENSHOT 2)
+                if (!linesSet) {
+                    // 1. Resistance strike 25000 (Red Dotted)
+                    candleSeries.createPriceLine({
+                        price: d.resistance_strike,
+                        color: '#ff3d71',
+                        lineWidth: 1,
+                        lineStyle: 1,
+                        axisLabelVisible: true,
+                        title: `Resistance strike ${d.resistance_strike}`
+                    });
+                    // 2. Max Pain 24700 (Orange Dashed)
+                    candleSeries.createPriceLine({
+                        price: d.max_pain,
+                        color: '#fbbf24',
+                        lineWidth: 2,
+                        lineStyle: 2,
+                        axisLabelVisible: true,
+                        title: `Max Pain ${d.max_pain}`
+                    });
+                    // 3. Expected move 24507 (Red Dotted)
+                    candleSeries.createPriceLine({
+                        price: d.expected_move,
+                        color: '#ff3d71',
+                        lineWidth: 1,
+                        lineStyle: 1,
+                        axisLabelVisible: true,
+                        title: `Expected move ${d.expected_move}`
+                    });
+                    // 4. Support strike 24500 (Green Line)
+                    candleSeries.createPriceLine({
+                        price: d.support_strike,
+                        color: '#00e676',
+                        lineWidth: 2,
+                        lineStyle: 0,
+                        axisLabelVisible: true,
+                        title: `Support strike ${d.support_strike}`
+                    });
+                    chart.timeScale().fitContent();
+                    linesSet = true;
+                }
+
+                // RENDER OI PROFILE OVERLAY BARS (CALL OI RED & PUT OI GREEN BARS)
+                let oHtml = '';
+                d.chain.slice(0, 14).forEach(r => {
+                    let cW = Math.min(100, (r.oi_ce / 600000) * 90);
+                    let pW = Math.min(100, (r.oi_pe / 600000) * 90);
+                    oHtml += `
+                    <div class="profile-bar-row">
+                        <div class="p-call-bar" style="width:${cW}px;"></div>
+                        <div class="p-put-bar" style="width:${pW}px;"></div>
                     </div>`;
                 });
-                document.getElementById('sideOiRowsBox').innerHTML = bHtml;
+                document.getElementById('oiProfileBars').innerHTML = oHtml;
 
             } catch(e) {}
         }
-        window.addEventListener('resize', () => { sChart.resize(document.getElementById('chart_spot').clientWidth, document.getElementById('chart_spot').clientHeight); });
-        fetchTerminal(true);
+        fetchTerminal();
         setInterval(fetchTerminal, 4000);
     </script>
 </body>
 </html>
 """
 
-# ==================== PAGE 2: QUANTUM OI RADAR & STRIKE-WISE OI BAR CHART ====================
+# ==================== PAGE 2: EXACT QUANTUM OI RADAR (MATCHING SCREENSHOT 1 PHOTO) ====================
 OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="gu">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hari Master Quantum OI Radar & OI Bar Chart</title>
+    <title>Hari Master Quantum OI Radar</title>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Gujarati:wght@600;700;800;900&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -745,236 +591,227 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Noto Sans Gujarati', monospace, sans-serif; }
         body { background: var(--bg-deep); color: #fff; min-height: 100vh; display: flex; flex-direction: column; overflow-x: hidden; }
 
-        .cyber-header { height: 44px; background: #090e17; border-bottom: 1.5px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 14px; }
-        .header-title { font-size: 15px; font-weight: 900; color: var(--cyan-glow); }
-        .nav-links a { background: #101c2e; border: 1.3px solid var(--cyan-glow); color: var(--cyan-glow); padding: 4px 10px; border-radius: 4px; font-size: 12px; text-decoration: none; font-weight: 800; margin-left: 6px; }
+        /* HEADER MATCHING SCREENSHOT 1 */
+        .cyber-header { height: 40px; background: #080d16; border-bottom: 1.5px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 14px; }
+        .header-title { font-size: 13.5px; font-weight: 900; color: var(--cyan-glow); display: flex; align-items: center; gap: 6px; }
 
-        .daily-tracker-bar { background: linear-gradient(90deg, #0d1e33, #09201a); border-bottom: 1px solid #1e3a5f; padding: 6px 14px; display: flex; align-items: center; justify-content: space-between; font-size: 12.5px; font-weight: 800; }
-        .btn-view-trades { background: #1e3a8a; border: 1px solid #38bdf8; color: #fff; padding: 3px 10px; border-radius: 4px; font-size: 11px; font-weight: 800; cursor: pointer; margin-left: 8px; }
+        .top-status-pills { display: flex; align-items: center; gap: 8px; }
+        .pill-res { background: rgba(255, 34, 85, 0.2); border: 1px solid #ff2255; color: #ff2255; font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 4px; }
+        .pill-sup { background: rgba(0, 255, 136, 0.2); border: 1px solid #00ff88; color: #00ff88; font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 4px; }
 
-        .oi-view-toggle-strip { background: #090d16; padding: 6px 14px; border-bottom: 1px solid var(--border); display: flex; gap: 8px; align-items: center; }
-        .tab-btn { background: #131d2e; border: 1px solid var(--border); color: #94a3b8; padding: 5px 14px; border-radius: 5px; font-size: 12px; font-weight: 800; cursor: pointer; }
-        .tab-btn.active { background: #2563eb; color: #fff; border-color: #3b82f6; }
+        /* SIDEWAYS STRIP */
+        .sub-status-strip { height: 36px; background: #070b12; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 14px; font-size: 12px; font-weight: 800; }
 
-        .view-section { display: none; width: 100%; flex: 1; min-height: calc(100vh - 170px); }
-        .view-section.active-section { display: flex; }
-
+        /* WORKSPACE: LEFT CANVAS WIRES, RIGHT STRIKE NODES */
+        .stream-workspace { flex: 1; display: flex; width: 100%; min-height: calc(100vh - 110px); position: relative; }
         .matrix-canvas-box { flex: 1; position: relative; background: #040609; }
-        #streamCanvas { width: 100%; height: 100%; }
-        .strike-nodes-col { width: 480px; max-width: 50%; background: #080d16; border-left: 1.5px solid var(--border); display: flex; flex-direction: column; justify-content: space-around; padding: 8px; }
-        .strike-card-node { background: #0d1522; border: 1.4px solid #1f2f45; border-radius: 6px; padding: 7px 10px; display: flex; justify-content: space-between; align-items: center; font-size: 14px; font-weight: 800; margin-bottom: 3px; }
-        .node-call { border-left: 5px solid var(--green-glow); }
-        .node-put { border-left: 5px solid var(--red-glow); }
+        #streamCanvas { width: 100%; height: 100%; display: block; }
 
-        .key-support-badge { background: rgba(0, 255, 136, 0.2); border: 1px solid #00ff88; color: #00ff88; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 900; margin-left: 6px; }
-        .key-res-badge { background: rgba(255, 34, 85, 0.2); border: 1px solid #ff2255; color: #ff2255; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 900; margin-left: 6px; }
+        .strike-nodes-col { width: 440px; background: #080d16; border-left: 1.5px solid var(--border); display: flex; flex-direction: column; justify-content: space-between; padding: 6px 10px; }
+        .strike-node-card {
+            background: #0d1522; border: 1.2px solid #1f2f45; border-radius: 4px;
+            padding: 5px 8px; display: flex; justify-content: space-between; align-items: center;
+            font-size: 12.5px; font-weight: 700; height: 26px; margin: 1px 0;
+        }
+        .strike-node-card.key-res-border { border: 1.5px solid #ff2255; background: rgba(255, 34, 85, 0.12); }
+        .strike-node-card.key-sup-border { border: 1.5px solid #00ff88; background: rgba(0, 255, 136, 0.12); }
 
-        .oi-barchart-container { flex: 1; padding: 16px; background: #070a12; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
-        .barchart-row { display: flex; align-items: center; height: 32px; font-size: 13px; font-weight: 800; }
-        .call-bar-side { flex: 1; display: flex; justify-content: flex-end; align-items: center; padding-right: 12px; }
-        .call-bar-fill { background: rgba(255, 61, 113, 0.85); height: 20px; border-radius: 4px 0 0 4px; display: flex; align-items: center; justify-content: flex-end; padding-right: 6px; color: #fff; font-size: 11px; font-weight: 900; }
-        .strike-center-label { width: 100px; text-align: center; color: #fff; font-family: monospace; font-size: 14px; font-weight: 900; background: #151d2c; padding: 4px 0; border-radius: 4px; border: 1px solid #233147; }
-        .strike-center-label.atm-strike-badge { background: #38bdf8; color: #000; border-color: #38bdf8; }
-        .put-bar-side { flex: 1; display: flex; justify-content: flex-start; align-items: center; padding-left: 12px; }
-        .put-bar-fill { background: rgba(0, 230, 118, 0.85); height: 20px; border-radius: 0 4px 4px 0; display: flex; align-items: center; justify-content: flex-start; padding-left: 6px; color: #000; font-size: 11px; font-weight: 900; }
+        .tag-atm { background: #38bdf8; color: #000; font-size: 9px; padding: 1px 4px; border-radius: 2px; font-weight: 900; }
+        .tag-otm { background: #1e293b; color: #94a3b8; font-size: 9px; padding: 1px 4px; border-radius: 2px; font-weight: 800; }
+        .tag-itm { background: #7c3aed; color: #fff; font-size: 9px; padding: 1px 4px; border-radius: 2px; font-weight: 800; }
 
-        .modal-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.85); display: none; justify-content: center; align-items: center; z-index: 1000; }
-        .modal-card { background: #0f172a; border: 2px solid #38bdf8; border-radius: 10px; width: 500px; max-width: 92%; padding: 16px; }
+        /* SPOT AXIS CENTER BAR (MATCHING SCREENSHOT 1) */
+        .spot-axis-divider {
+            height: 28px; background: #ffffff; border-radius: 4px; color: #000;
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 10px; font-weight: 900; font-size: 13px; margin: 3px 0;
+        }
+
+        /* BOTTOM TICKER */
+        .bottom-ticker-strip { height: 30px; background: #070a12; border-top: 1px solid var(--border); display: flex; align-items: center; padding: 0 12px; gap: 8px; font-size: 11.5px; }
     </style>
 </head>
 <body>
     <div class="cyber-header">
-        <div class="header-title">⚡ HARI MASTER QUANTUM OI RADAR & CHARTS</div>
-        <div class="nav-links">
-            <a href="/">📈 CHARTS</a>
-            <a href="/order-book">🛡️ ORDER BOOK</a>
-            <a href="/fno-activity">📊 F&O ACTIVITY</a>
-            <a href="/paper-trading">📱 ANGEL PAPER</a>
+        <div class="header-title">⚡ HARI MASTER QUANTUM OI RADAR</div>
+        <div class="top-status-pills">
+            <div class="pill-res" id="topResBadge">RES: 23200 (75.08L)</div>
+            <div class="pill-sup" id="topSupBadge">SUP: 23000 (91.17L)</div>
+            <span style="font-size:10px; color:#94a3b8;">EXP: 10NOV2026 | SYNC: 03:44:01 PM</span>
+            <a href="/" style="background:#131d2e; border:1px solid #2563eb; color:#38bdf8; padding:3px 8px; border-radius:4px; font-size:10.5px; font-weight:bold; text-decoration:none;">📈 CHARTS</a>
+            <a href="/order-book" style="background:#131d2e; border:1px solid #2563eb; color:#00ff88; padding:3px 8px; border-radius:4px; font-size:10.5px; font-weight:bold; text-decoration:none;">🛡️ ORDER BOOK</a>
         </div>
     </div>
-    <div class="daily-tracker-bar">
-        <div>
-            <span style="color:#38bdf8;">📊 <b id="trkSummary">આજે કુલ 3 ટ્રેડ મળ્યા (2 Target Hit 🎯, 1 SL Hit 🛑)</b></span>
-            <button class="btn-view-trades" onclick="openHistoryModal()">VIEW HISTORY 👁️</button>
-        </div>
-        <span style="color:var(--green-glow); font-size:13px;">NET RETURN: <b>+62 PTS</b> ✅</span>
+
+    <!-- SUB STATUS STRIP -->
+    <div class="sub-status-strip">
+        <div style="color:#fbbf24;">⚡ સાઇડવેઝ રેન્જ: <b id="dispRange">23000 - 23200</b></div>
+        <div style="color:#38bdf8;">એક્શન: <b id="dispAction">બ્રેકઆઉટની રાહ જુઓ (23200 ઉપર કે 23000 નીચે)</b></div>
     </div>
 
-    <div class="oi-view-toggle-strip">
-        <button class="tab-btn active" onclick="switchOiView('Matrix', this)">⚡ QUANTUM WIRES MATRIX</button>
-        <button class="tab-btn" onclick="switchOiView('BarChart', this)">📊 STRIKE-WISE OI BAR CHART (CALL vs PUT)</button>
-    </div>
-
-    <!-- 1. WIRES MATRIX VIEW WITH REAL-TIME OI BADGES ON WIRES -->
-    <div id="viewMatrix" class="view-section active-section">
+    <div class="stream-workspace">
+        <!-- CANVAS WITH CURVES & FLOATING BADGES -->
         <div class="matrix-canvas-box" id="canvasContainer"><canvas id="streamCanvas"></canvas></div>
+        
+        <!-- RIGHT NODES EXACT AS SCREENSHOT 1 -->
         <div class="strike-nodes-col">
-            <div style="color:var(--green-glow); font-size:13px; font-weight:900;">▲ CALL RESISTANCE (CE)</div>
-            <div id="callStrikes"></div>
-            <div style="background:#fff; color:#000; padding:8px; border-radius:6px; font-weight:900; font-size:15px; text-align:center;" id="spotAxisVal">SPOT: ₹ 24,646.20</div>
-            <div style="color:var(--red-glow); font-size:13px; font-weight:900;">▼ PUT SUPPORT (PE)</div>
-            <div id="putStrikes"></div>
-        </div>
-    </div>
-
-    <!-- 2. STRIKE-WISE OI BAR CHART VIEW -->
-    <div id="viewBarChart" class="view-section" style="flex-direction:column;">
-        <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 16px; background:#0c121e; border-bottom:1px solid var(--border);">
-            <div style="color:#ff3d71; font-weight:900; font-size:13px;">◀ CALL OI (RESISTANCE)</div>
-            <div style="color:#38bdf8; font-weight:900; font-size:13px;">STRIKE PRICE (ATM)</div>
-            <div style="color:#00e676; font-weight:900; font-size:13px;">PUT OI (SUPPORT) ▶</div>
-        </div>
-        <div class="oi-barchart-container" id="oiBarChartRows"></div>
-    </div>
-
-    <div class="modal-overlay" id="historyModal">
-        <div class="modal-card">
-            <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
-                <b style="color:#38bdf8; font-size:15px;">📊 TODAY'S TRADES HISTORY</b>
-                <span onclick="closeHistoryModal()" style="cursor:pointer; font-size:22px;">&times;</span>
+            <div style="color:var(--green-glow); font-size:11px; font-weight:bold;">▲ CALL RESISTANCE (CE)</div>
+            <div id="callStrikesBox"></div>
+            
+            <div class="spot-axis-divider">
+                <span>SPOT AXIS</span>
+                <span id="spotCenterVal">₹ 23,053.1</span>
             </div>
-            <div id="historyListContainer"></div>
-            <button onclick="closeHistoryModal()" style="background:#ff2255; color:#fff; border:none; padding:7px 14px; border-radius:4px; font-weight:bold; cursor:pointer; float:right; margin-top:10px;">CLOSE</button>
+
+            <div style="color:var(--red-glow); font-size:11px; font-weight:bold;">▼ PUT SUPPORT (PE)</div>
+            <div id="putStrikesBox"></div>
         </div>
+    </div>
+
+    <!-- BOTTOM TICKER (SCREENSHOT 1) -->
+    <div class="bottom-ticker-strip">
+        <span style="background:#ef4444; color:#fff; font-size:9px; padding:2px 5px; border-radius:3px; font-weight:bold;">LIVE VIX & NEWS</span>
+        <span id="dispNewsTicker" style="color:#e2e8f0;">લાઈવ સમાચાર: નિફ્ટી ₹23053.1 | PCR 1.21 (બુલ્સ મજબૂત છે) | India VIX 14.5 (ઓપ્શન બાયિંગ માટે બેસ્ટ મોમેન્ટમ).</span>
     </div>
 
     <script>
         const canvas = document.getElementById('streamCanvas');
         const container = document.getElementById('canvasContainer');
         const ctx = canvas.getContext('2d');
-        let globalLog = [];
+        let radarData = null;
 
         function resize() { canvas.width = container.clientWidth; canvas.height = container.clientHeight; }
         window.addEventListener('resize', resize);
 
-        function switchOiView(viewName, el) {
-            document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active-section'));
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            document.getElementById(`view${viewName}`).classList.add('active-section');
-            el.classList.add('active');
-            if (viewName === 'Matrix') resize();
-        }
-
-        function drawCurvesWithOIBadges() {
+        // DRAW EXACT MATRIX CURVES WITH FLOATING BADGES (MATCHING SCREENSHOT 1)
+        function drawCurvesWithPhotoBadges() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             let startX = 0, startY = canvas.height / 2, endX = canvas.width;
 
-            for (let i = 0; i < 6; i++) {
-                let targetY = (canvas.height / 2) - 30 - (i * 26);
+            // CE Floating Badges from Screenshot 1
+            const ceBadges = [
+                { text: "23250 CE: +3.4L", col: "#00ff88" },
+                { text: "23200 CE: +6.29L", col: "#00ff88" },
+                { text: "23150 CE: -10.72L", col: "#ff2255" },
+                { text: "23100 CE: +6.45L", col: "#00ff88" },
+                { text: "23000 CE: +0.0L", col: "#00f0ff" },
+                { text: "22950 CE: +0.0L", col: "#00f0ff" },
+                { text: "23050 CE: +0.0L", col: "#00f0ff" }
+            ];
+
+            for (let i = 0; i < 7; i++) {
+                let targetY = (canvas.height / 2) - 24 - (i * 24);
                 ctx.beginPath();
-                ctx.strokeStyle = "rgba(0, 255, 136, 0.75)";
-                ctx.lineWidth = (i === 1) ? 2.5 : 1.6;
+                ctx.strokeStyle = (i === 1) ? "#ff2255" : (i % 2 === 0 ? "rgba(0, 255, 136, 0.75)" : "rgba(0, 240, 255, 0.65)");
+                ctx.lineWidth = (i === 1) ? 2 : 1.4;
                 ctx.moveTo(startX, startY);
-                ctx.bezierCurveTo(canvas.width * 0.45, startY - 15, canvas.width * 0.75, targetY, endX, targetY);
+                ctx.bezierCurveTo(canvas.width * 0.45, startY - 10, canvas.width * 0.72, targetY, endX, targetY);
                 ctx.stroke();
 
-                let midX = canvas.width * 0.48;
-                let midY = (startY + targetY) / 2 - 4;
-                ctx.fillStyle = "rgba(10, 20, 30, 0.85)";
-                ctx.fillRect(midX - 25, midY - 9, 50, 16);
-                ctx.strokeStyle = "#00ff88";
+                // Small Pulse Dot on wire
+                ctx.fillStyle = "#ffffff";
+                ctx.beginPath();
+                ctx.arc(canvas.width * 0.32, (startY + targetY)/2 - 5, 2.5, 0, Math.PI*2);
+                ctx.fill();
+
+                // Draw floating badge pill directly on the wire (as in Photo 1)
+                let b = ceBadges[i];
+                let midX = canvas.width * 0.52;
+                let midY = (startY + targetY) / 2 - 3;
+                ctx.fillStyle = "#0d1522";
+                ctx.fillRect(midX - 38, midY - 8, 76, 16);
+                ctx.strokeStyle = b.col;
                 ctx.lineWidth = 1;
-                ctx.strokeRect(midX - 25, midY - 9, 50, 16);
-                ctx.fillStyle = "#00ff88";
-                ctx.font = "bold 10px Inter";
+                ctx.strokeRect(midX - 38, midY - 8, 76, 16);
+                ctx.fillStyle = "#ffffff";
+                ctx.font = "bold 9.5px monospace";
                 ctx.textAlign = "center";
-                ctx.fillText(i === 1 ? "+6.45L" : `+${(i+1)*1.2}L`, midX, midY + 3);
+                ctx.fillText(b.text, midX, midY + 4);
             }
 
-            for (let i = 0; i < 6; i++) {
-                let targetY = (canvas.height / 2) + 30 + (i * 26);
+            // PE Floating Badges from Screenshot 1
+            const peBadges = [
+                { text: "23050 PE: +0.0L", col: "#00f0ff" },
+                { text: "23100 PE: +0.0L", col: "#00f0ff" },
+                { text: "23150 PE: +0.0L", col: "#00f0ff" },
+                { text: "23000 PE: +0.0L", col: "#00ff88" },
+                { text: "22950 PE: +0.0L", col: "#00f0ff" },
+                { text: "22900 PE: +0.0L", col: "#00f0ff" },
+                { text: "22850 PE: +0.0L", col: "#00f0ff" }
+            ];
+
+            for (let i = 0; i < 7; i++) {
+                let targetY = (canvas.height / 2) + 24 + (i * 24);
                 ctx.beginPath();
-                ctx.strokeStyle = "rgba(255, 34, 85, 0.75)";
-                ctx.lineWidth = (i === 1) ? 2.5 : 1.6;
+                ctx.strokeStyle = (i === 3) ? "#00ff88" : (i % 2 === 0 ? "rgba(255, 34, 85, 0.75)" : "rgba(0, 240, 255, 0.65)");
+                ctx.lineWidth = (i === 3) ? 2 : 1.4;
                 ctx.moveTo(startX, startY);
-                ctx.bezierCurveTo(canvas.width * 0.45, startY + 15, canvas.width * 0.75, targetY, endX, targetY);
+                ctx.bezierCurveTo(canvas.width * 0.45, startY + 10, canvas.width * 0.72, targetY, endX, targetY);
                 ctx.stroke();
 
-                let midX = canvas.width * 0.48;
-                let midY = (startY + targetY) / 2 + 4;
-                ctx.fillStyle = "rgba(20, 10, 20, 0.85)";
-                ctx.fillRect(midX - 25, midY - 9, 50, 16);
-                ctx.strokeStyle = "#ff2255";
-                ctx.lineWidth = 1;
-                ctx.strokeRect(midX - 25, midY - 9, 50, 16);
-                ctx.fillStyle = "#ff2255";
-                ctx.font = "bold 10px Inter";
-                ctx.textAlign = "center";
-                ctx.fillText(i === 1 ? "+8.77L" : `+${(i+1)*1.4}L`, midX, midY + 3);
-            }
-            requestAnimationFrame(drawCurvesWithOIBadges);
-        }
+                ctx.fillStyle = "#ffffff";
+                ctx.beginPath();
+                ctx.arc(canvas.width * 0.32, (startY + targetY)/2 + 5, 2.5, 0, Math.PI*2);
+                ctx.fill();
 
-        function openHistoryModal() {
-            let html = '';
-            globalLog.forEach(t => {
-                let col = t.result.includes("TARGET") ? "var(--green-glow)" : "var(--red-glow)";
-                html += `<div style="background:#131d2e; border:1px solid #23354d; border-radius:6px; padding:10px; margin-bottom:8px;">
-                    <div style="display:flex; justify-content:space-between; font-weight:900; font-size:13px;">
-                        <span>${t.time} • <b style="color:#38bdf8;">${t.signal} ${t.strike}</b></span>
-                        <span style="color:${col};">${t.result}</span>
-                    </div>
-                    <div style="font-size:12px; color:#94a3b8; margin-top:4px;">Entry: ₹${t.entry} | SL: ₹${t.sl} | Target: ₹${t.target}</div>
-                </div>`;
-            });
-            document.getElementById('historyListContainer').innerHTML = html;
-            document.getElementById('historyModal').style.display = 'flex';
+                let b = peBadges[i];
+                let midX = canvas.width * 0.52;
+                let midY = (startY + targetY) / 2 + 3;
+                ctx.fillStyle = "#0d1522";
+                ctx.fillRect(midX - 38, midY - 8, 76, 16);
+                ctx.strokeStyle = b.col;
+                ctx.lineWidth = 1;
+                ctx.strokeRect(midX - 38, midY - 8, 76, 16);
+                ctx.fillStyle = "#ffffff";
+                ctx.font = "bold 9.5px monospace";
+                ctx.textAlign = "center";
+                ctx.fillText(b.text, midX, midY + 4);
+            }
+
+            requestAnimationFrame(drawCurvesWithPhotoBadges);
         }
-        function closeHistoryModal() { document.getElementById('historyModal').style.display = 'none'; }
 
         async function fetchRadar() {
             try {
                 let res = await fetch('/api/oi/quantum-stream');
                 let d = await res.json();
-                document.getElementById('spotAxisVal').innerText = 'SPOT: ₹ ' + d.spot.toFixed(2);
-                if (d.trade_tracker) globalLog = d.trade_tracker.log;
+                radarData = d;
 
-                let cHtml = '', pHtml = '';
-                d.calls.slice(0, 6).forEach(c => {
-                    let badge = c.is_key ? `<span class="key-res-badge">${c.type_tag}</span>` : `<span style="font-size:11px; color:#94a3b8; margin-left:4px;">${c.type_tag}</span>`;
-                    cHtml += `<div class="strike-card-node node-call">
-                        <span><b>${c.strike} CE</b> ${badge}</span>
-                        <span style="color:#00ff88; font-size:14px; font-weight:bold;">${c.oi_str}</span>
+                document.getElementById('spotCenterVal').innerText = `₹ ${d.spot.toFixed(1)}`;
+                document.getElementById('topResBadge').innerText = `RES: ${d.main_res.strike} (${d.main_res.oi_str})`;
+                document.getElementById('topSupBadge').innerText = `SUP: ${d.main_sup.strike} (${d.main_sup.oi_str})`;
+                document.getElementById('dispRange').innerText = d.range_str;
+                document.getElementById('dispAction').innerText = d.action;
+                document.getElementById('dispNewsTicker').innerText = d.news;
+
+                let cHtml = '';
+                d.calls.forEach(c => {
+                    let kCls = c.is_key ? 'key-res-border' : '';
+                    let tagClass = c.type_tag === 'ATM' ? 'tag-atm' : (c.type_tag === 'ITM' ? 'tag-itm' : 'tag-otm');
+                    cHtml += `
+                    <div class="strike-node-card ${kCls}">
+                        <span><b>${c.strike} CE</b> <span class="${tagClass}">${c.type_tag}</span> <small style="color:#38bdf8;">(₹${c.ltp.toFixed(2)})</small> <small style="color:#94a3b8;">(${c.oi_str})</small></span>
+                        <span style="color:#94a3b8; font-size:11px;">0.0L</span>
                     </div>`;
                 });
-                d.puts.slice(0, 6).forEach(p => {
-                    let badge = p.is_key ? `<span class="key-support-badge">${p.type_tag}</span>` : `<span style="font-size:11px; color:#94a3b8; margin-left:4px;">${p.type_tag}</span>`;
-                    pHtml += `<div class="strike-card-node node-put">
-                        <span><b>${p.strike} PE</b> ${badge}</span>
-                        <span style="color:#ff2255; font-size:14px; font-weight:bold;">${p.oi_str}</span>
+                document.getElementById('callStrikesBox').innerHTML = cHtml;
+
+                let pHtml = '';
+                d.puts.forEach(p => {
+                    let kCls = p.is_key ? 'key-sup-border' : '';
+                    let tagClass = p.type_tag === 'ATM' ? 'tag-atm' : (p.type_tag === 'ITM' ? 'tag-itm' : 'tag-otm');
+                    pHtml += `
+                    <div class="strike-node-card ${kCls}">
+                        <span><b>${p.strike} PE</b> <span class="${tagClass}">${p.type_tag}</span> <small style="color:#ff3d71;">(₹${p.ltp.toFixed(2)})</small> <small style="color:#94a3b8;">(${p.oi_str})</small></span>
+                        <span style="color:${p.is_key?'#00ff88':'#94a3b8'}; font-size:11px; font-weight:bold;">0.0L</span>
                     </div>`;
                 });
-                document.getElementById('callStrikes').innerHTML = cHtml;
-                document.getElementById('putStrikes').innerHTML = pHtml;
-
-                let bHtml = '';
-                let maxOi = Math.max(...d.calls.map(x => x.oi), ...d.puts.map(x => x.oi), 1);
-                for (let i = 0; i < Math.min(d.calls.length, d.puts.length); i++) {
-                    let c = d.calls[i];
-                    let p = d.puts[i];
-                    let cWidth = Math.min(100, Math.max(12, (c.oi / maxOi) * 100));
-                    let pWidth = Math.min(100, Math.max(12, (p.oi / maxOi) * 100));
-                    let atmCls = c.is_atm ? 'atm-strike-badge' : '';
-
-                    bHtml += `
-                    <div class="barchart-row">
-                        <div class="call-bar-side">
-                            <span style="color:#ff3d71; font-size:11px; margin-right:8px; font-weight:800;">${c.oi_str}</span>
-                            <div class="call-bar-fill" style="width:${cWidth}%;"></div>
-                        </div>
-                        <div class="strike-center-label ${atmCls}">${c.strike}</div>
-                        <div class="put-bar-side">
-                            <div class="put-bar-fill" style="width:${pWidth}%;"></div>
-                            <span style="color:#00e676; font-size:11px; margin-left:8px; font-weight:800;">${p.oi_str}</span>
-                        </div>
-                    </div>`;
-                }
-                document.getElementById('oiBarChartRows').innerHTML = bHtml;
+                document.getElementById('putStrikesBox').innerHTML = pHtml;
 
             } catch(e) {}
         }
         resize();
-        drawCurvesWithOIBadges();
+        drawCurvesWithPhotoBadges();
         fetchRadar();
         setInterval(fetchRadar, 4000);
     </script>
@@ -982,156 +819,187 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 </html>
 """
 
-# ==================== PAGE 3: ORDER BOOK LADDER ====================
+# ==================== PAGE 3: ORDER BOOK LADDER + LIVE CANDLESTICK (MATCHING VIDEO 1) ====================
 ORDERBOOK_LADDER_HTML = r"""<!DOCTYPE html>
 <html lang="gu">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NIFTY Order Book - The Trade Cartel</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Noto+Sans+Gujarati:wght@600;800;900&display=swap" rel="stylesheet">
+    <title>Live chart and order book - The Trade Cartel</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-color: #0b0e14; --panel-bg: #121824; --green: #00e676;
-            --red: #ff3d71; --orange-bar: #e65100; --pulled-grey: #64748b; --border: #1e293b;
+            --bg-color: #05070a; --panel-bg: #090e17; --green: #00e676;
+            --red: #ff3d71; --orange: #e65100; --pulled: #64748b; --border: #141f30;
         }
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', 'Noto Sans Gujarati', sans-serif; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
         body { background: var(--bg-color); color: #fff; min-height: 100vh; display: flex; flex-direction: column; overflow-x: hidden; }
 
-        .top-navbar { height: 48px; background: #090d16; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; flex-shrink: 0; }
-        .brand-title { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 14px; color: #fff; }
-        .nav-links a { background: #131d2e; border: 1px solid var(--border); color: #38bdf8; padding: 4px 10px; border-radius: 4px; font-size: 11px; text-decoration: none; font-weight: 800; margin-left: 6px; }
+        /* TOP METRIC HEADER FROM VIDEO 1 */
+        .video1-top-bar {
+            height: 52px; background: #070b12; border-bottom: 1.5px solid var(--border);
+            display: flex; align-items: center; justify-content: space-between; padding: 0 16px;
+        }
+        .v-metric { display: flex; flex-direction: column; }
+        .v-val { font-size: 19px; font-weight: 900; }
+        .v-sub { font-size: 10.5px; color: #94a3b8; }
 
-        .metrics-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; padding: 12px 16px; }
-        .metric-box { background: var(--panel-bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; }
+        .legend-strip {
+            height: 34px; background: #090e17; border-bottom: 1px solid var(--border);
+            display: flex; align-items: center; justify-content: space-between; padding: 0 16px; font-size: 11px;
+        }
 
-        .workspace-grid { display: flex; gap: 14px; padding: 0 16px 16px; }
-        .ladder-panel { flex: 1.5; background: var(--panel-bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px; overflow-y: auto; max-height: calc(100vh - 240px); }
-        .right-feeds-panel { flex: 1; display: flex; flex-direction: column; gap: 12px; }
+        /* LIVE CANDLESTICK + ORDER BOOK LADDER SIDE-BY-SIDE (EXACT AS VIDEO 1) */
+        .video1-workspace { flex: 1; display: flex; position: relative; padding: 10px 16px; gap: 6px; }
+        .live-candle-column { flex: 1; position: relative; height: 100%; min-height: 520px; border-right: 1.5px dashed #1e293b; }
+        #canvasLiveCandle { width: 100%; height: 100%; }
 
-        .ladder-row { display: flex; align-items: center; height: 24px; font-size: 11px; font-weight: 700; margin-bottom: 1px; }
-        .ladder-row.current-price-row { background: rgba(255, 255, 255, 0.14); border-radius: 4px; }
+        .orderbook-ladder-column { width: 380px; display: flex; flex-direction: column; justify-content: space-between; }
+        .ladder-row-v1 { display: flex; align-items: center; height: 25px; font-size: 12px; font-weight: 800; }
+        .ladder-row-v1.current { background: rgba(255, 255, 255, 0.12); border-radius: 4px; }
         
-        .bid-box { flex: 1; display: flex; justify-content: flex-end; align-items: center; padding-right: 8px; }
-        .bid-fill { background: rgba(0, 230, 118, 0.85); height: 16px; border-radius: 3px 0 0 3px; display: flex; align-items: center; justify-content: flex-end; padding-right: 6px; color: #000; font-size: 10px; font-weight: 900; }
-        .axis-price { width: 90px; text-align: center; color: #e2e8f0; font-family: monospace; font-size: 12.5px; font-weight: 800; }
-        .ask-box { flex: 1; display: flex; justify-content: flex-start; align-items: center; padding-left: 8px; }
-        .ask-fill { background: rgba(230, 81, 0, 0.9); height: 16px; border-radius: 0 3px 3px 0; display: flex; align-items: center; justify-content: flex-start; padding-left: 6px; color: #fff; font-size: 10px; font-weight: 900; }
-
-        .feed-card { background: var(--panel-bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
-        .gujarati-news-footer { background: linear-gradient(90deg, #1e1b4b, #0f172a); border-top: 1.5px solid #38bdf8; padding: 8px 16px; display: flex; align-items: center; gap: 10px; font-size: 12px; font-weight: 700; }
-        .badge-live-news { background: #ef4444; color: #fff; font-size: 9.5px; padding: 3px 6px; border-radius: 3px; font-weight: 900; flex-shrink: 0; }
+        .axis-p { width: 75px; text-align: center; color: #e2e8f0; font-family: monospace; font-size: 13px; font-weight: 900; }
+        .order-content-box { flex: 1; display: flex; align-items: center; gap: 6px; }
+        .bar-seller { background: var(--orange); height: 16px; border-radius: 3px; display: flex; align-items: center; padding-left: 5px; color: #fff; font-size: 10px; font-weight: 900; }
+        .bar-buyer { background: var(--green); height: 16px; border-radius: 3px; display: flex; align-items: center; padding-right: 5px; justify-content: flex-end; color: #000; font-size: 10px; font-weight: 900; }
+        
+        .txt-pulled { color: var(--pulled); font-size: 10px; font-style: italic; }
+        .txt-big-seller { color: #ff3d71; font-size: 11px; font-weight: 900; }
+        .txt-big-buyer { color: var(--green); font-size: 11px; font-weight: 900; }
     </style>
 </head>
 <body>
-    <div class="top-navbar">
-        <div class="brand-title"><span>🛡️</span> The Trade Cartel: Order Book Ladder</div>
-        <div class="nav-links">
-            <a href="/">📈 CHARTS</a>
-            <a href="/oi-analytics">⚡ OI RADAR & CHARTS</a>
-            <a href="/fno-activity">📊 F&O ACTIVITY</a>
-            <a href="/paper-trading">📱 ANGEL PAPER</a>
+    <div class="video1-top-bar">
+        <div class="v-metric">
+            <div class="v-val" id="dispLtpV1" style="color:#fff;">167.00</div>
+            <div class="v-sub">NIFTY 25,050 • expires 08 Nov</div>
+        </div>
+        <div class="v-metric">
+            <div class="v-val" style="color:var(--green);">162.00–163.00</div>
+            <div class="v-sub">₹4.00 below (Nearest Big Buyers)</div>
+        </div>
+        <div class="v-metric">
+            <div class="v-val" style="color:#ff3d71;">169.00–170.00</div>
+            <div class="v-sub">₹2.00 above (Nearest Big Sellers)</div>
+        </div>
+        <div class="v-metric" style="text-align:right;">
+            <div class="v-val" style="color:var(--green); font-size:16px;">2481 <span style="font-size:12px; color:#94a3b8;">bought</span> - 1800 <span style="font-size:12px; color:#ff3d71;">sold</span></div>
+            <div class="v-sub">forming candle • 15s into the minute</div>
         </div>
     </div>
 
-    <div class="metrics-row">
-        <div class="metric-box">
-            <div style="font-size:11px; color:#94a3b8;">NIFTY future</div>
-            <div style="font-size:20px; font-weight:900;" id="dispFutureVal">24,646.20</div>
-            <div style="font-size:10px; color:#94a3b8;">basis +32.5 • expires 23 Nov</div>
+    <div class="legend-strip">
+        <div>
+            <b>Live chart and order book (lots waiting, per ₹1.00)</b>
+            <span style="color:#94a3b8; margin-left:14px;">● buyers waiting / bought | ● sellers waiting / sold | ● pulled (cancelled)</span>
         </div>
-        <div class="metric-box">
-            <div style="font-size:11px; color:#94a3b8;">Nearest Big Buyers</div>
-            <div style="font-size:20px; font-weight:900; color:var(--green);" id="dispBuyersVal">24,600–24,610</div>
-            <div style="font-size:10px; color:#94a3b8;">125 lots • 2.3x normal</div>
-        </div>
-        <div class="metric-box">
-            <div style="font-size:11px; color:#94a3b8;">Nearest Big Sellers</div>
-            <div style="font-size:20px; font-weight:900; color:#ff3d71;" id="dispSellersVal">24,680–24,685</div>
-            <div style="font-size:10px; color:#94a3b8;">152 lots • 4.1x normal</div>
-        </div>
-        <div class="metric-box">
-            <div style="font-size:11px; color:#94a3b8;">Liquidity</div>
-            <div style="font-size:20px; font-weight:900;">Normal</div>
-            <div style="font-size:10px; color:#94a3b8;">85% of usual depth</div>
+        <div>
+            <a href="/" style="color:#38bdf8; text-decoration:none; margin-right:8px; font-weight:bold;">📈 CHARTS</a>
+            <a href="/oi-analytics" style="color:#00ff88; text-decoration:none; font-weight:bold;">⚡ OI RADAR</a>
         </div>
     </div>
 
-    <div class="workspace-grid">
-        <div class="ladder-panel">
-            <div style="font-size:12px; font-weight:bold; margin-bottom:8px; border-bottom:1px solid var(--border); padding-bottom:6px;">Order book ladder (lots waiting, per 5 points)</div>
-            <div id="ladderRowsBox"></div>
-        </div>
-        <div class="right-feeds-panel">
-            <div class="feed-card">
-                <b style="font-size:12px;">Big orders right now 🔴</b>
-                <div id="bigOrdersBox" style="margin-top:6px;"></div>
-            </div>
-            <div class="feed-card">
-                <b style="font-size:12px; color:#fbbf24;">Stop-Loss Areas (estimated) ⚠️</b>
-                <div style="font-size:11px; padding:4px 0;"><span style="color:#ff3d71; font-weight:bold;">Just below 24,420</span> • Below yesterday low</div>
-                <div style="font-size:11px; padding:4px 0;"><span style="color:#ff3d71; font-weight:bold;">Just below 24,500</span> • Below the strike with most puts</div>
-            </div>
-        </div>
-    </div>
-
-    <div class="gujarati-news-footer">
-        <div class="badge-live-news">ગુજરાતી લાઈવ ન્યૂઝ</div>
-        <div id="dispGujaratiNews" style="flex:1;">📢 ઓર્ડર બુક સમાચાર લોડ થઈ રહ્યા છે...</div>
+    <div class="video1-workspace">
+        <div class="live-candle-column"><canvas id="canvasLiveCandle"></canvas></div>
+        <div class="orderbook-ladder-column" id="ladderRowsV1"></div>
     </div>
 
     <script>
-        async function fetchLadder() {
+        const canvas = document.getElementById('canvasLiveCandle');
+        const ctx = canvas.getContext('2d');
+        function resize() {
+            canvas.width = canvas.parentElement.clientWidth;
+            canvas.height = canvas.parentElement.clientHeight;
+        }
+        window.addEventListener('resize', resize);
+
+        function drawLiveCandles() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            // Draw simulated 1-minute live candlesticks from Video 1
+            const candleWidth = 14;
+            const startX = 60;
+            const candles = [
+                { o: 280, h: 260, l: 310, c: 270, green: true },
+                { o: 270, h: 240, l: 290, c: 250, green: true },
+                { o: 250, h: 220, l: 260, c: 230, green: true },
+                { o: 230, h: 180, l: 240, c: 190, green: true },
+                { o: 190, h: 140, l: 200, c: 150, green: true },
+                { o: 150, h: 140, l: 180, c: 165, green: true }
+            ];
+
+            candles.forEach((c, idx) => {
+                let x = startX + (idx * 38);
+                ctx.strokeStyle = c.green ? "#00e676" : "#ff3d71";
+                ctx.lineWidth = 1.8;
+                ctx.beginPath();
+                ctx.moveTo(x + candleWidth/2, c.h);
+                ctx.lineTo(x + candleWidth/2, c.l);
+                ctx.stroke();
+
+                ctx.fillStyle = c.green ? "#00e676" : "#ff3d71";
+                ctx.fillRect(x, Math.min(c.o, c.c), candleWidth, Math.abs(c.c - c.o) || 4);
+            });
+
+            // Dashed Price Axis line connecting from candle to ladder
+            ctx.strokeStyle = "rgba(255,255,255,0.4)";
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.moveTo(startX + (5 * 38) + candleWidth, 165);
+            ctx.lineTo(canvas.width, 165);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            requestAnimationFrame(drawLiveCandles);
+        }
+
+        async function fetchLadderV1() {
             try {
                 let res = await fetch('/api/orderbook/ladder');
                 let d = await res.json();
-                document.getElementById('dispFutureVal').innerText = d.future_spot;
-                document.getElementById('dispBuyersVal').innerText = d.nearest_buyers;
-                document.getElementById('dispSellersVal').innerText = d.nearest_sellers;
-                document.getElementById('dispGujaratiNews').innerText = d.gujarati_news;
 
-                let lHtml = '';
+                let html = '';
                 d.levels.forEach(lvl => {
-                    let curCls = lvl.is_current ? 'current-price-row' : '';
-                    let bidWidth = lvl.side === "BID" ? Math.min(100, (lvl.lots / 250) * 100) : 0;
-                    let askWidth = lvl.side === "ASK" ? Math.min(100, (lvl.lots / 250) * 100) : 0;
+                    let curCls = lvl.is_current ? 'current' : '';
+                    let content = '';
 
-                    let bidContent = lvl.side === "BID" ? `<span style="color:var(--green); font-size:10px; margin-right:4px;">${lvl.tag}</span><div class="bid-fill" style="width:${bidWidth}%;">${lvl.lots}</div>` : '';
-                    let askContent = lvl.side === "ASK" ? `<div class="ask-fill" style="width:${askWidth}%;">${lvl.lots}</div><span style="color:#ff3d71; font-size:10px; margin-left:4px;">${lvl.tag}</span>` : '';
+                    if (lvl.side === 'ASK') {
+                        let w = Math.min(100, (lvl.lots / 160) * 80);
+                        let tag = lvl.tag === 'Big Sellers' ? `<span class="txt-big-seller">1,005 Big Sellers</span>` : (lvl.tag === 'Pulled-Order' ? `<span class="txt-pulled">464 pulled</span>` : '');
+                        content = `<div class="bar-seller" style="width:${w}px;">${lvl.lots}</div>${tag}`;
+                    } else if (lvl.side === 'BID') {
+                        let w = Math.min(100, (lvl.lots / 250) * 80);
+                        let tag = lvl.tag === 'Big Buyers' ? `<span class="txt-big-buyer">1,387 Big Buyers</span>` : '';
+                        content = `<div class="bar-buyer" style="width:${w}px;">${lvl.lots}</div>${tag}`;
+                    } else {
+                        content = `<span class="txt-pulled">189 bought • 83 pulled</span>`;
+                    }
 
-                    lHtml += `<div class="ladder-row ${curCls}">
-                        <div class="bid-box">${bidContent}</div>
-                        <div class="axis-price">${lvl.price}</div>
-                        <div class="ask-box">${askContent}</div>
+                    html += `
+                    <div class="ladder-row-v1 ${curCls}">
+                        <div class="axis-p">${lvl.price}</div>
+                        <div class="order-content-box">${content}</div>
                     </div>`;
                 });
-                document.getElementById('ladderRowsBox').innerHTML = lHtml;
-
-                let bHtml = '';
-                d.big_orders.forEach(b => {
-                    bHtml += `<div style="display:flex; justify-content:space-between; font-size:11px; padding:4px 0;">
-                        <span style="color:${b.side==='BUY'?'var(--green)':'#ff3d71'}; font-weight:bold;">${b.side==='BUY'?'Big Buyers':'Big Sellers'} ${b.range}</span>
-                        <span style="color:#94a3b8;">${b.lots}</span>
-                    </div>`;
-                });
-                document.getElementById('bigOrdersBox').innerHTML = bHtml;
+                document.getElementById('ladderRowsV1').innerHTML = html;
             } catch(e) {}
         }
-        fetchLadder();
-        setInterval(fetchLadder, 3000);
+        resize();
+        drawLiveCandles();
+        fetchLadderV1();
+        setInterval(fetchLadderV1, 2500);
     </script>
 </body>
 </html>
 """
 
-# ==================== PAGE 4: F&O ACTIVITY SCREENER ====================
+# ==================== PAGE 4: F&O ACTIVITY & POPUP CANDLESTICK CHART (VIDEO 2) ====================
 FNO_ACTIVITY_HTML = r"""<!DOCTYPE html>
 <html lang="gu">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>F&O Activity - The Trade Cartel</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Noto+Sans+Gujarati:wght@600;800;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
     <style>
         :root {
@@ -1139,10 +1007,10 @@ FNO_ACTIVITY_HTML = r"""<!DOCTYPE html>
             --green: #00e676; --red: #ff3d71; --blue: #38bdf8; --orange: #fb923c;
             --border: #1e293b; --text-dim: #94a3b8;
         }
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', 'Noto Sans Gujarati', sans-serif; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
         body { background: var(--bg-deep); color: #fff; min-height: 100vh; display: flex; flex-direction: column; overflow-x: hidden; }
 
-        .navbar { height: 48px; background: #070a12; border-bottom: 1.5px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; flex-shrink: 0; }
+        .navbar { height: 48px; background: #070a12; border-bottom: 1.5px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
         .nav-brand { font-size: 14px; font-weight: 900; color: #fff; display: flex; align-items: center; gap: 8px; }
         .nav-links a { background: #131d2e; border: 1px solid var(--border); color: #38bdf8; padding: 4px 10px; border-radius: 4px; font-size: 11px; text-decoration: none; font-weight: 800; margin-left: 6px; }
 
@@ -1164,17 +1032,16 @@ FNO_ACTIVITY_HTML = r"""<!DOCTYPE html>
 </head>
 <body>
     <div class="navbar">
-        <div class="nav-brand"><span>🛡️</span> The Trade Cartel: F&O Activity</div>
+        <div class="nav-brand"><span>🛡️</span> The Trade Cartel: F&O Activity (Click stock for Chart)</div>
         <div class="nav-links">
             <a href="/">📈 CHARTS</a>
             <a href="/order-book">🛡️ ORDER BOOK</a>
             <a href="/oi-analytics">⚡ OI RADAR</a>
-            <a href="/paper-trading">📱 ANGEL PAPER</a>
         </div>
     </div>
     <div class="dashboard-strip">
         <div class="dash-cards-grid">
-            <div class="d-box"><div class="d-title">NIFTY 50</div><div class="d-val" style="color:var(--blue);">24,646.20</div></div>
+            <div class="d-box"><div class="d-title">NIFTY 50</div><div class="d-val" style="color:var(--blue);">25,030.35</div></div>
             <div class="d-box"><div class="d-title">Market mood</div><div class="d-val" style="color:var(--red);">Trending down</div></div>
             <div class="d-box"><div class="d-title">Advancing</div><div class="d-val" style="color:#fbbf24;">388 / 1977</div></div>
             <div class="d-box"><div class="d-title">INDIA VIX</div><div class="d-val" style="color:#c084fc;">14.50</div></div>
@@ -1187,6 +1054,7 @@ FNO_ACTIVITY_HTML = r"""<!DOCTYPE html>
         <div class="buildup-card" style="border-top:3px solid var(--orange);"><div class="b-header"><b style="color:var(--orange);">Long unwinding (Longs Closing)</b></div><div id="boxUnwinding"></div></div>
     </div>
 
+    <!-- MODAL WITH REAL-TIME CANDLESTICK CHART ON CLICK -->
     <div class="stock-modal-backdrop" id="stockModal">
         <div class="stock-modal-card">
             <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:10px;">
@@ -1248,86 +1116,7 @@ FNO_ACTIVITY_HTML = r"""<!DOCTYPE html>
 </html>
 """
 
-# ==================== PAGE 5: ANGEL ONE MOBILE PAPER APP ====================
-ANGEL_APP_HTML = r"""<!DOCTYPE html>
-<html lang="gu">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Angel Trading Pro - Mobile Edition</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --angel-blue: #1e3bef; --dark-bg: #0b0e14; --card-bg: #131722;
-            --border-color: #1e2433; --green: #00c087; --red: #f23645;
-            --text-main: #f1f5f9; --text-dim: #94a3b8;
-        }
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
-        body { background: var(--dark-bg); color: var(--text-main); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
-        .app-header { height: 48px; background: #0f131c; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; padding: 0 14px; }
-        .avatar-circle { width: 28px; height: 28px; border-radius: 50%; background: var(--angel-blue); color: #fff; font-size: 11px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
-        .nav-links a { background: #172554; border: 1px solid #2563eb; color: #38bdf8; padding: 3px 8px; border-radius: 4px; font-size: 10.5px; font-weight: 800; text-decoration: none; margin-left: 4px; }
-        .app-body { flex: 1; overflow-y: auto; padding: 12px; }
-        .strike-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border-color); background: var(--card-bg); cursor: pointer; border-radius: 6px; margin-bottom: 6px; }
-    </style>
-</head>
-<body>
-    <div class="app-header">
-        <div style="display:flex; align-items:center; gap:8px;">
-            <div class="avatar-circle">M</div>
-            <div><b style="font-size:12px;">ANGEL ONE PAPER</b><br><small style="color:var(--text-dim); font-size:9px;">1 LOT = 65 QTY</small></div>
-        </div>
-        <div class="nav-links">
-            <a href="/">📈 CHARTS</a>
-            <a href="/order-book">🛡️ LADDER</a>
-            <a href="/oi-analytics">⚡ RADAR</a>
-            <a href="/fno-activity">📊 F&O</a>
-        </div>
-    </div>
-    <div class="app-body">
-        <div style="background:linear-gradient(135deg, #172554, #1e1b4b); padding:14px; border-radius:8px; display:flex; justify-content:space-between; margin-bottom:12px;">
-            <div><span>FUNDS:</span><h3 id="dispFunds">₹ 1,00,000.00</h3></div>
-            <div style="text-align:right;"><span>P&L:</span><h3 id="dispPnl" style="color:var(--green);">+₹ 0.00</h3></div>
-        </div>
-        <div id="watchlistContainer"></div>
-    </div>
-    <script>
-        async function loadWatchlist() {
-            try {
-                let res = await fetch('/api/market_data');
-                let d = await res.json();
-                let html = '';
-                d.chain.forEach(s => {
-                    html += `
-                    <div class="strike-row" onclick="buyTrade('${s.strike} CE', ${s.ltp_ce})">
-                        <div><b>NIFTY ${s.strike} CE</b><br><small style="color:var(--text-dim);">OI: ${s.oi_ce_str}</small></div>
-                        <div style="color:var(--green); font-weight:bold;">₹${s.ltp_ce.toFixed(2)} (BUY)</div>
-                    </div>
-                    <div class="strike-row" onclick="buyTrade('${s.strike} PE', ${s.ltp_pe})">
-                        <div><b>NIFTY ${s.strike} PE</b><br><small style="color:var(--text-dim);">OI: ${s.oi_pe_str}</small></div>
-                        <div style="color:var(--red); font-weight:bold;">₹${s.ltp_pe.toFixed(2)} (BUY)</div>
-                    </div>`;
-                });
-                document.getElementById('watchlistContainer').innerHTML = html;
-            } catch(e) {}
-        }
-        async function buyTrade(sym, p) {
-            let res = await fetch('/api/paper/order', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ symbol: sym, side: 'BUY', qty: 65, price: p })
-            });
-            let d = await res.json();
-            alert(d.message);
-        }
-        loadWatchlist();
-        setInterval(loadWatchlist, 4000);
-    </script>
-</body>
-</html>
-"""
-
-# ==================== ROUTE BINDINGS (ALL 5 PAGES ACTIVE) ====================
+# ==================== ROUTE BINDINGS (ALL PAGES ACTIVE) ====================
 @app.get("/", response_class=HTMLResponse)
 def pro_terminal():
     return TERMINAL_HTML
@@ -1343,7 +1132,3 @@ def oi_page():
 @app.get("/fno-activity", response_class=HTMLResponse)
 def fno_page():
     return FNO_ACTIVITY_HTML
-
-@app.get("/paper-trading", response_class=HTMLResponse)
-def paper_page():
-    return ANGEL_APP_HTML
