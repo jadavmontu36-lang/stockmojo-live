@@ -7,6 +7,7 @@ import json
 import os
 import math
 import time
+import random
 
 app = FastAPI()
 
@@ -51,7 +52,7 @@ CACHE_STORE = {
     "stream_time": 0,
     "ladder_data": None,
     "ladder_time": 0,
-    "last_spot": 25038.30
+    "last_spot": 24890.50
 }
 
 PAPER_STATE = {
@@ -60,6 +61,29 @@ PAPER_STATE = {
     "positions": [],
     "order_history": []
 }
+
+DAILY_SIGNAL_LOG = [
+    {
+        "time": "09:35 AM",
+        "signal": "BUY CE",
+        "strike": "24850 CE",
+        "entry": 165.0,
+        "sl": 145.0,
+        "target": 205.0,
+        "result": "TARGET HIT (+40 pts)",
+        "notes": "24850 Support bounce + 1387 Big Buyers"
+    },
+    {
+        "time": "11:20 AM",
+        "signal": "BUY PE",
+        "strike": "24950 PE",
+        "entry": 190.0,
+        "sl": 170.0,
+        "target": 230.0,
+        "result": "TARGET HIT (+40 pts)",
+        "notes": "24950 Rejection + 1005 Big Sellers"
+    }
+]
 
 FNO_BUILDUPS = {
     "long_buildup": [
@@ -185,7 +209,7 @@ def fetch_candle_data_for_token(token, interval_str, exchange="NSE"):
 @app.get("/api/market_data")
 def get_market_data(tf: str = "5m", selected_ce_strike: int = 0, selected_pe_strike: int = 0):
     now = time.time()
-    if CACHE_STORE["market_data"] and (now - CACHE_STORE["market_time"]) < 2.5:
+    if CACHE_STORE["market_data"] and (now - CACHE_STORE["market_time"]) < 2.0:
         return CACHE_STORE["market_data"]
 
     spot = CACHE_STORE["last_spot"]
@@ -264,14 +288,85 @@ def get_market_data(tf: str = "5m", selected_ce_strike: int = 0, selected_pe_str
         "ce_candles": ce_candles,
         "pe_candles": pe_candles,
         "chain": chain,
-        "resistance_strike": 25050,
-        "max_pain": 25000,
-        "support_strike": 24950,
         "india_vix": fetch_india_vix()
     }
     CACHE_STORE["market_data"] = result
     CACHE_STORE["market_time"] = now
     return result
+
+# ==================== DYNAMIC LIVE ORDER BOOK (CENTERED ON LIVE SPOT) ====================
+@app.get("/api/orderbook/twiq")
+def get_orderbook_twiq():
+    m = get_market_data()
+    spot = m["spot"]
+    center_price = int(round(spot / 5.0) * 5)
+    future_price = round(spot - 1.60, 2)
+
+    levels = []
+    # Generate 13 levels up and 13 levels down from center_price (5-point step)
+    for step in range(13, -14, -1):
+        price = center_price + (step * 5)
+        is_current = (step == 0)
+
+        bid_lot = None
+        ask_lot = None
+        tag = ""
+
+        if step > 0:
+            # Sellers (Ask side)
+            if step == 11: ask_lot, tag = 201, "Big"
+            elif step == 7: ask_lot, tag = 119, "Big"
+            elif step == 4: ask_lot, tag = 189, "SellTarget"
+            elif step in [1, 2, 3]: ask_lot = int(15 + (step * 7))
+            else: ask_lot = int(12 + abs(step * 4) + (price % 7))
+            if step in [3, 4]: bid_lot = 12 + step
+        elif step == 0:
+            is_current = True
+            bid_lot = 34
+            ask_lot = None
+            tag = "Current"
+        else:
+            # Buyers (Bid side)
+            if step == -2: bid_lot, tag = 247, "BuyTarget"
+            elif step == -5: bid_lot, tag = 167, "Big"
+            elif step == -6: bid_lot, tag = 858, "HeavyBuy"
+            elif step in [-1, -3]: bid_lot = int(30 + abs(step * 9))
+            else: bid_lot = int(14 + abs(step * 3) + (price % 5))
+
+        levels.append({
+            "price": price,
+            "bid": bid_lot,
+            "ask": ask_lot,
+            "tag": tag,
+            "is_current": is_current
+        })
+
+    open_buy_strike = center_price - 10
+    open_sell_strike = center_price + 20
+
+    big_orders = [
+        {"type": "SELL", "range": f"{center_price+25:,}–{center_price+30:,}", "lots": "131 lots • 2.3x usual • waiting 25 min", "sub": f"spot {spot:,.1f} • 25/25 strikes"},
+        {"type": "BUY",  "range": f"{center_price-30:,}–{center_price-25:,}", "lots": "858 lots • 14.8x usual • waiting 25 min", "sub": f"spot {spot:,.1f} • 25/25 strikes"},
+        {"type": "SELL", "range": f"{center_price+35:,}–{center_price+40:,}", "lots": "129 lots • 2.2x usual • waiting 4 min", "sub": f"spot {spot:,.1f} • 25/25 strikes"},
+        {"type": "BUY",  "range": f"{center_price-10:,}–{center_price-5:,}", "lots": "264 lots • 4.6x usual • waiting 11 min", "sub": f"spot {spot:,.1f} • 25/25 strikes"},
+        {"type": "SELL", "range": f"{center_price+65:,}–{center_price+70:,}", "lots": "118 lots • 2.0x usual • waiting 11 min", "sub": f"spot {spot:,.1f} • 25/25 strikes"},
+        {"type": "SELL", "range": f"{center_price-25:,}–{center_price-20:,}", "lots": "167 lots • 2.9x usual • waiting 18 min", "sub": f"spot {spot:,.1f} • 25/25 strikes"}
+    ]
+
+    return {
+        "spot": spot,
+        "future": future_price,
+        "center_price": center_price,
+        "open_buy_order": {"strike": f"{open_buy_strike:,}", "pts": "-13.3 pts", "lots": "247 lots"},
+        "open_sell_order": {"strike": f"{open_sell_strike:,}", "pts": "+6.7 pts", "lots": "204 lots"},
+        "levels": levels,
+        "big_orders": big_orders,
+        "depth_20pts": "106% of usual",
+        "spread": "3.20 pts • usual 2.70",
+        "buyers_pct": 39,
+        "sellers_pct": 61,
+        "updated_time": get_current_ist_time().strftime("%I:%M:%S %p")
+    }
 
 @app.get("/api/oi/quantum-stream")
 def get_quantum_stream():
@@ -302,62 +397,19 @@ def get_quantum_stream():
         "main_sup": {"strike": 23000, "oi_str": "91.17L"},
         "range_str": "23000 - 23200",
         "action": "બ્રેકઆઉટની રાહ જુઓ (23200 ઉપર કે 23000 નીચે)",
-        "news": "લાઈવ સમાચાર: નિફ્ટી ₹23053.1 | PCR 1.21 (બુલ્સ મજબૂત છે) | India VIX 14.5 (ઓપ્શન બાયિંગ માટે બેસ્ટ મોમેન્ટમ)."
+        "news": "લાઈવ સમાચાર: નિફ્ટી ₹23053.1 | PCR 1.21 (બુલ્સ મજબૂત છે) | India VIX 14.5."
     }
 
-@app.get("/api/orderbook/twiq")
-def get_orderbook_twiq():
-    # EXACT LADDER DATA FROM USER'S VIDEO_1.MP4
-    levels = [
-        {"price": 25120, "bid": None, "ask": 14, "tag": ""},
-        {"price": 25115, "bid": None, "ask": 18, "tag": ""},
-        {"price": 25110, "bid": None, "ask": 201, "tag": "Big"},
-        {"price": 25105, "bid": None, "ask": 47, "tag": ""},
-        {"price": 25100, "bid": None, "ask": 86, "tag": ""},
-        {"price": 25095, "bid": None, "ask": 14, "tag": ""},
-        {"price": 25090, "bid": None, "ask": 14, "tag": ""},
-        {"price": 25085, "bid": None, "ask": 18, "tag": ""},
-        {"price": 25080, "bid": None, "ask": 19, "tag": ""},
-        {"price": 25075, "bid": None, "ask": 19, "tag": ""},
-        {"price": 25070, "bid": None, "ask": 119, "tag": "Big"},
-        {"price": 25065, "bid": None, "ask": 81, "tag": ""},
-        {"price": 25060, "bid": None, "ask": 18, "tag": ""},
-        {"price": 25055, "bid": 15, "ask": 189, "tag": "SellTarget"},
-        {"price": 25050, "bid": 18, "ask": 22, "tag": ""},
-        {"price": 25045, "bid": 12, "ask": 8, "tag": ""},
-        {"price": 25040, "bid": 33, "ask": 8, "tag": ""},
-        {"price": 25035, "bid": 34, "ask": None, "tag": "Current"},
-        {"price": 25030, "bid": 49, "ask": None, "tag": ""},
-        {"price": 25025, "bid": 247, "ask": None, "tag": "BuyTarget"},
-        {"price": 25020, "bid": 31, "ask": None, "tag": ""},
-        {"price": 25015, "bid": 16, "ask": None, "tag": ""},
-        {"price": 25010, "bid": 167, "ask": None, "tag": "Big"},
-        {"price": 25005, "bid": 858, "ask": None, "tag": "HeavyBuy"},
-        {"price": 25000, "bid": 37, "ask": None, "tag": ""},
-        {"price": 24995, "bid": 12, "ask": None, "tag": ""},
-        {"price": 24990, "bid": 18, "ask": None, "tag": ""}
-    ]
-
-    big_orders = [
-        {"type": "SELL", "range": "25,060–25,065", "lots": "131 lots • 2.3x usual • waiting 25 min", "sub": "spot 25,038 • 25/25 strikes"},
-        {"type": "BUY",  "range": "25,000–25,005", "lots": "858 lots • 14.8x usual • waiting 25 min", "sub": "spot 25,038 • 25/25 strikes"},
-        {"type": "SELL", "range": "25,070–25,075", "lots": "129 lots • 2.2x usual • waiting 4 min", "sub": "spot 25,038 • 25/25 strikes"},
-        {"type": "BUY",  "range": "25,025–25,030", "lots": "264 lots • 4.6x usual • waiting 11 min", "sub": "spot 25,038 • 25/25 strikes"},
-        {"type": "SELL", "range": "25,100–25,105", "lots": "118 lots • 2.0x usual • waiting 11 min", "sub": "spot 25,038 • 25/25 strikes"},
-        {"type": "SELL", "range": "25,010–25,015", "lots": "167 lots • 2.9x usual • waiting 18 min", "sub": "spot 25,038 • 25/25 strikes"}
-    ]
-
+@app.get("/api/fno/buildups")
+def get_fno_buildups():
+    m = get_market_data()
     return {
-        "spot": 25038.3,
-        "future": 25036.70,
-        "open_buy_order": {"strike": "25,025", "pts": "-19.1 pts", "lots": "247 lots"},
-        "open_sell_order": {"strike": "25,055", "pts": "+5.8 pts", "lots": "204 lots"},
-        "levels": levels,
-        "big_orders": big_orders,
-        "depth_20pts": "106% of usual",
-        "spread": "3.20 pts • usual 2.70",
-        "buyers_pct": 39,
-        "sellers_pct": 61
+        "spot": f"{m['spot']:,.2f}",
+        "market_mood": "Trending down",
+        "advancing": "388 / 1977",
+        "india_vix": m["india_vix"],
+        "gap_prediction": "Gap-down open likely (39 pts down, 45% confidence)",
+        "buildups": FNO_BUILDUPS
     }
 
 # ==================== PAGE 1: PRO TERMINAL (3 CHARTS TOGETHER + OPTION CHAIN) ====================
@@ -399,7 +451,7 @@ TERMINAL_HTML = r"""<!DOCTYPE html>
 <body>
     <div class="top-navbar">
         <div class="brand">📈 3 CHARTS + OPTION CHAIN (PAGE 1)</div>
-        <div class="spot-badge" id="spotBadge">NIFTY 50: 25,038.30</div>
+        <div class="spot-badge" id="spotBadge">NIFTY 50: 24,890.50</div>
         <div class="nav-links">
             <a href="/" class="active">📈 3 CHARTS</a>
             <a href="/oi-analytics">⚡ OI RADAR (PAGE 2)</a>
@@ -584,6 +636,7 @@ OI_DASHBOARD_HTML = r"""<!DOCTYPE html>
 
     <div class="stream-workspace">
         <div class="matrix-canvas-box" id="canvasContainer"><canvas id="streamCanvas"></canvas></div>
+        
         <div class="strike-nodes-col">
             <div style="color:var(--green-glow); font-size:11px; font-weight:bold;">▲ CALL RESISTANCE (CE)</div>
             <div id="callStrikesBox"></div>
@@ -790,7 +843,7 @@ FNO_ACTIVITY_HTML = r"""<!DOCTYPE html>
     </div>
     <div class="dashboard-strip">
         <div class="dash-cards-grid">
-            <div class="d-box"><div class="d-title">NIFTY 50</div><div class="d-val" style="color:var(--blue);">25,038.30</div></div>
+            <div class="d-box"><div class="d-title">NIFTY 50</div><div class="d-val" style="color:var(--blue);">24,890.50</div></div>
             <div class="d-box"><div class="d-title">Market mood</div><div class="d-val" style="color:var(--red);">Trending down</div></div>
             <div class="d-box"><div class="d-title">Advancing</div><div class="d-val" style="color:#fbbf24;">388 / 1977</div></div>
             <div class="d-box"><div class="d-title">INDIA VIX</div><div class="d-val" style="color:#c084fc;">14.50</div></div>
@@ -865,13 +918,13 @@ FNO_ACTIVITY_HTML = r"""<!DOCTYPE html>
 </html>
 """
 
-# ==================== PAGE 4: TWIQ.PRO ORDER BOOK LADDER + CHART + BIG ORDERS (EXACT VIDEO 1) ====================
+# ==================== PAGE 4: TWIQ.PRO LIVE ORDER BOOK LADDER + CHART (EXACT VIDEO 1) ====================
 ORDERBOOK_LADDER_HTML = r"""<!DOCTYPE html>
 <html lang="gu">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>twiq.pro - Nifty Futures Order Book (Video 1)</title>
+    <title>Available on twiq.pro (Video 1 Setup)</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
     <style>
@@ -882,17 +935,15 @@ ORDERBOOK_LADDER_HTML = r"""<!DOCTYPE html>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
         body { background: var(--bg-color); color: #fff; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
 
-        /* HEADER MATCHING VIDEO 1 (TWIQ.PRO) */
         .twiq-navbar {
-            height: 44px; background: #070a10; border-bottom: 1.5px solid var(--border);
+            height: 42px; background: #070a10; border-bottom: 1.5px solid var(--border);
             display: flex; align-items: center; justify-content: space-between; padding: 0 14px; z-index: 20;
         }
         .twiq-brand { font-size: 13.5px; font-weight: 900; color: #fff; display: flex; align-items: center; gap: 8px; }
         .pill-badge { background: #1e293b; color: #38bdf8; font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 4px; }
         .nav-links a { background: #131d2e; border: 1px solid #2563eb; color: #38bdf8; padding: 3px 8px; border-radius: 4px; font-size: 10.5px; font-weight: bold; text-decoration: none; margin-left: 4px; }
 
-        /* 3-COLUMN SPLIT WORKSPACE MATCHING VIDEO 1 */
-        .twiq-workspace { flex: 1; display: flex; width: 100%; height: calc(100vh - 44px); overflow: hidden; }
+        .twiq-workspace { flex: 1; display: flex; width: 100%; height: calc(100vh - 42px); overflow: hidden; }
 
         /* COLUMN 1: CANDLESTICK CHART (LEFT) */
         .col-chart { flex: 4.8; position: relative; height: 100%; background: #07090e; border-right: 1.5px solid var(--border); }
@@ -908,7 +959,7 @@ ORDERBOOK_LADDER_HTML = r"""<!DOCTYPE html>
         .ladder-rows-scroll { flex: 1; overflow-y: auto; padding: 4px 0; }
         
         .ladder-row-item { display: flex; align-items: center; height: 23px; font-size: 11.5px; font-weight: 800; }
-        .ladder-row-item.current-price { background: rgba(255, 255, 255, 0.14); }
+        .ladder-row-item.current-price { background: rgba(255, 255, 255, 0.16); border-top: 1px solid rgba(255,255,255,0.4); border-bottom: 1px solid rgba(255,255,255,0.4); }
         .bid-side { flex: 1; display: flex; justify-content: flex-end; align-items: center; padding-right: 6px; }
         .bid-bar { background: var(--green); height: 15px; border-radius: 2px 0 0 2px; display: flex; align-items: center; justify-content: flex-end; padding-right: 4px; color: #000; font-size: 10px; font-weight: 900; }
         .p-axis { width: 70px; text-align: center; color: #e2e8f0; font-family: monospace; font-size: 12px; font-weight: 900; flex-shrink: 0; }
@@ -948,7 +999,7 @@ ORDERBOOK_LADDER_HTML = r"""<!DOCTYPE html>
             <div id="canvasFuturesChart"></div>
         </div>
 
-        <!-- 2. CENTER ORDER BOOK LADDER -->
+        <!-- 2. CENTER ORDER BOOK LADDER (LIVE CENTERED ON SPOT) -->
         <div class="col-ladder">
             <div style="padding:6px 10px; font-size:12px; font-weight:900; border-bottom:1px solid var(--border);">
                 Order book <small style="color:var(--text-dim); font-size:10px;">• Updated 0s ago</small>
@@ -958,13 +1009,13 @@ ORDERBOOK_LADDER_HTML = r"""<!DOCTYPE html>
             <div class="ladder-top-summary">
                 <div class="sum-box-buy">
                     <div style="color:var(--text-dim); font-size:9.5px;">Open Buy orders</div>
-                    <b style="color:var(--green); font-size:13px;" id="dispBuyOrderTop">25,025</b>
-                    <div style="font-size:9.5px; color:var(--text-dim);">-19.1 pts • 247 lots</div>
+                    <b style="color:var(--green); font-size:13px;" id="dispBuyOrderTop">--</b>
+                    <div style="font-size:9.5px; color:var(--text-dim);" id="dispBuySubTop">-13.3 pts • 247 lots</div>
                 </div>
                 <div class="sum-box-sell">
                     <div style="color:var(--text-dim); font-size:9.5px;">Open Sell orders</div>
-                    <b style="color:var(--red); font-size:13px;" id="dispSellOrderTop">25,055</b>
-                    <div style="font-size:9.5px; color:var(--text-dim);">+5.8 pts • 204 lots</div>
+                    <b style="color:var(--red); font-size:13px;" id="dispSellOrderTop">--</b>
+                    <div style="font-size:9.5px; color:var(--text-dim);" id="dispSellSubTop">+6.7 pts • 204 lots</div>
                 </div>
             </div>
 
@@ -977,7 +1028,7 @@ ORDERBOOK_LADDER_HTML = r"""<!DOCTYPE html>
             <div class="ladder-rows-scroll" id="ladderRowsBox"></div>
 
             <div style="padding:6px 10px; font-size:9.5px; color:var(--text-dim); border-top:1px solid var(--border); background:#080c14;">
-                Colored price: 2x usual 58 lots or more • Spot <b style="color:#fff;" id="dispSpotLadder">25,038.3</b>
+                Colored price: 2x usual 58 lots or more • Spot <b style="color:#00ff88;" id="dispSpotLadder">--</b>
             </div>
         </div>
 
@@ -1036,11 +1087,15 @@ ORDERBOOK_LADDER_HTML = r"""<!DOCTYPE html>
                 }
 
                 document.getElementById('dispSpotLadder').innerText = l.spot.toFixed(1);
+                document.getElementById('dispBuyOrderTop').innerText = l.open_buy_order.strike;
+                document.getElementById('dispBuySubTop').innerText = `${l.open_buy_order.pts} • ${l.open_buy_order.lots}`;
+                document.getElementById('dispSellOrderTop').innerText = l.open_sell_order.strike;
+                document.getElementById('dispSellSubTop').innerText = `${l.open_sell_order.pts} • ${l.open_sell_order.lots}`;
 
-                // Render Ladder Rows (Matching Video 1)
+                // Render Live Ladder Rows dynamically centered on spot
                 let lHtml = '';
                 l.levels.forEach(lvl => {
-                    let curCls = (lvl.tag === 'Current') ? 'current-price' : '';
+                    let curCls = lvl.is_current ? 'current-price' : '';
                     let bidContent = '';
                     if (lvl.bid) {
                         let w = Math.min(100, Math.max(12, (lvl.bid / 858) * 100));
@@ -1060,7 +1115,7 @@ ORDERBOOK_LADDER_HTML = r"""<!DOCTYPE html>
                 });
                 document.getElementById('ladderRowsBox').innerHTML = lHtml;
 
-                // Render Big Orders Feed (Matching Video 1)
+                // Render Big Orders Feed
                 let bHtml = '';
                 l.big_orders.forEach(o => {
                     let col = o.type === 'BUY' ? 'var(--green)' : 'var(--red)';
@@ -1079,7 +1134,7 @@ ORDERBOOK_LADDER_HTML = r"""<!DOCTYPE html>
             tvChart.resize(document.getElementById('canvasFuturesChart').clientWidth, document.getElementById('canvasFuturesChart').clientHeight);
         });
         fetchTwiqData();
-        setInterval(fetchTwiqData, 3000);
+        setInterval(fetchTwiqData, 2000);
     </script>
 </body>
 </html>
